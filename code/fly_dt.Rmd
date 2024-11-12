@@ -1,0 +1,549 @@
+---
+title: "实证数据-地中海果蝇"
+author: "SpencerWang"
+date: "2024-08-03"
+output: html_document
+---
+# function definition  
+```{r}
+setwd("C:/Users/Spenc/Desktop/manual_packages/FdaCluReg")
+install.packages("C:/Users/Spenc/Desktop/manual_packages/FdaCluReg_0.0.0.18.tar.gz")
+library(FdaCluReg)
+ari_fun=function(x)
+{
+  library(igraph)
+  ari_seq=NULL
+  n=ncol(x)
+  for (i in 2:n) 
+  {
+    for (j in 1:(i-1))
+      {
+      ari_seq=c(ari_seq,compare(x[,i],x[,j],method="adjusted.rand"))
+    }
+  }
+  return(ari_seq)
+}
+library(fda)
+```
+
+# import the data  
+```{r}
+fly_dt=readLines("C:/users/spenc/desktop/simulation_results/new/real_dt/medfly1000.txt")
+selected_fly_dt1=fly_dt[sapply(fly_dt,nchar)>50]
+selected_fly_dt2=sapply(selected_fly_dt1,strsplit,split=" ")
+#果蝇信息
+cut_fun=function(x){return(x[[1]][1:7])}
+fly_info_mat=matrix(unlist(lapply(selected_fly_dt2,cut_fun)),byrow = T,ncol = 7)
+fly_info_mat=apply(fly_info_mat,2,as.numeric)
+save(selected_fly_dt2,file = "C:/users/spenc/desktop/simulation_results/new/real_dt/fly_dt_list.RData")
+save(fly_info_mat,file = "C:/users/spenc/desktop/simulation_results/new/real_dt/fly_info_mat.RData")
+load("C:/users/spenc/desktop/simulation_results/new/real_dt/fly_dt_list.RData")
+load("C:/users/spenc/desktop/simulation_results/new/real_dt/fly_info_mat.RData")
+
+cut_fun=function(x){return(x[1:7])}
+fly_info_mat=matrix(unlist(lapply(selected_fly_dt2,cut_fun)),byrow = T,ncol = 7)
+#产卵记录
+record_mat=matrix(rep(0,90*1000),nrow = 1000)
+for (i in 1:1000) 
+{
+  temp_l=length(selected_fly_dt2[[i]])
+  temp_record=as.numeric(selected_fly_dt2[[i]][-(1:7)])
+  record_mat[i,1:min(90,temp_l-7)]=temp_record[1:min(90,temp_l-7)]
+}
+record_mat=apply(record_mat,2,as.numeric)
+fly_info_df=data.frame(id=fly_info_mat[,1],eggs_all=fly_info_mat[,2],life=fly_info_mat[,7])
+write.csv(record_mat,"C:/users/spenc/desktop/simulation_results/new/real_dt/fly_egg_record.csv")
+write.csv(fly_info_df,"C:/users/spenc/desktop/simulation_results/new/real_dt/fly_info_df.csv")
+1
+```
+# define clustering regression function in  this example  
+```{r}
+record_mat_ori=read.csv("C:/users/spenc/desktop/simulation_results/new/real_dt/fly_egg_record.csv")
+fly_info_df=read.csv("C:/users/spenc/desktop/simulation_results/new/real_dt/fly_info_df.csv")
+record_mat=apply(record_mat_ori[,-1],2,as.numeric)
+#数据筛选-选取前30天的产卵记录还有剩余存活天数
+demand_index=fly_info_df$life>30
+fly_info_df_needed=fly_info_df[demand_index,]
+record_mat_needed=t(record_mat[demand_index,1:30])#取对数
+life_time_remain=as.numeric(fly_info_df_needed$life)-30
+
+basis_need=create.bspline.basis(c(seq(1,30,3),30),norder = 4)
+fd_test=smooth.basis(1:30,record_mat_needed,basis_need)
+
+
+
+fly_clureg=function(seed,method="ls")
+{
+  library(FdaCluReg)
+  library(fda)
+  basis_need=create.bspline.basis(c(seq(1,30,3),30),norder = 4)
+  temp_res_gibbs=gibbs_clusterwise_regression_auto(X_list = list(record_mat_needed),Y=life_time_remain,basis = basis_need,sample_t = 1:30,true_label = rep(1,length(life_time_remain)),K_max = 4,seed = seed,method = method,lambda = 1,rounds = 110)
+  temp_res_2021=clusterwise_reg_2021_auto(X_list = list(record_mat_needed),Y=life_time_remain,basis = basis_need,sample_t = 1:30,true_label = rep(1,length(life_time_remain)),K_max = 4,seed = seed,method = method)
+  save(temp_res_gibbs,file = paste("C:/users/spenc/desktop/simulation_results/new/real_dt/gibbs/logit",seed,".RData",sep = ""))
+  save(temp_res_2021,file = paste("C:/users/spenc/desktop/simulation_results/new/real_dt/2021/logit",seed,".RData",sep = ""))
+  return(seed)
+}
+```
+
+carry out the experiment with 50 repetitions under different method setting. Experiment results should be stored first before moving on to another experiment otherwise the previous results will be covered.   
+
+```{r}
+num_cores=10
+library(parallel)
+cl=makeCluster(num_cores)
+clusterExport(cl,  envir = environment(),varlist =c("record_mat_needed","life_time_remain"))
+parLapply(cl,1:50,fly_clureg,method="ls")
+```
+
+
+# Summary and visualization for LAD methods
+## fd coefficient of GCFLR-eBIC(LAD)  
+```{r}
+library(ggplot2)
+LAD_ari=NULL
+#here is the directory where the experiment results are stored 
+file_list=paste("C:/users/spenc/desktop/simulation_results/new/real_dt/lad/gibbs/",dir("C:/users/spenc/desktop/simulation_results/new/real_dt/lad/gibbs"),sep="")
+
+#样例结果用于画图
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,30,0.2)
+temp_res=temp_res_gibbs
+fd_df=eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]])
+
+K_eBIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_gibbs
+K_eBIC=c(K_eBIC,temp_res$K_eBIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_eBIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_eBIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_eBIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_eBIC$coefficients[[1]])
+}
+#数据
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+
+LAD_ari=c(LAD_ari,ari_record)
+#可视化
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "GCFLR-eBIC(LAD)")
+# fd coefficient of GCFLR-eBIC(LAD)
+p1=p
+```
+## fd coefficient of CFLR-eBIC(LAD)  
+```{r}
+file_list=paste("C:/users/spenc/desktop/simulation_results/new/real_dt/lad/2021/",dir("C:/users/spenc/desktop/simulation_results/new/real_dt/lad/2021"),sep="")
+#样例结果用于画图
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,30,0.2)
+temp_res=temp_res_2021
+fd_df=eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]])
+
+K_eBIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_2021
+K_eBIC=c(K_eBIC,temp_res$K_eBIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_eBIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_eBIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_eBIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_eBIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+LAD_ari=c(LAD_ari,ari_record)
+#可视化
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "CFLR-eBIC(LAD)")
+  
+p2=p
+```
+## fd coefficient of CFLR-BIC(LAD)
+```{r}
+
+file_list=paste("C:/users/spenc/desktop/simulation_results/new/real_dt/lad/2021/",dir("C:/users/spenc/desktop/simulation_results/new/real_dt/lad/2021"),sep="")
+#样例结果用于画图
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,30,0.2)
+temp_res=temp_res_2021
+fd_df=eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[1]])
+
+K_BIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_2021
+K_BIC=c(K_BIC,temp_res$K_BIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_BIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_BIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_BIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_BIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+LAD_ari=c(LAD_ari,ari_record)
+#可视化
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "CFLR-BIC(LAD)")
+  
+p3=p
+
+```
+## ARI summary  
+```{r}
+LAD_ari_mat=matrix(LAD_ari,ncol = 3)
+LAD_ari_plot=data.frame(CFLR_BIC=LAD_ari_mat[,3],CFLR_eBIC=LAD_ari_mat[,2],GCFLR_eBIC=LAD_ari_mat[,1])
+colnames(LAD_ari_plot)=c("CFLR-BIC(LAD)","CFLR-eBIC(LAD)","GCFLR-eBIC(LAD)")
+```
+
+# Summary and visualization for LS methods  
+## fd coefficient of GCFLR-eBIC(LS)  
+```{r}
+LS_ari=NULL
+```
+
+
+```{r}
+file_list=paste("C:/users/spenc/desktop/simulation_results/new/real_dt/ls/gibbs/",dir("C:/users/spenc/desktop/simulation_results/new/real_dt/ls/gibbs"),sep="")
+
+#样例结果用于画图
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,30,0.2)
+temp_res=temp_res_gibbs
+fd_df=eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]])
+
+K_eBIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_gibbs
+K_eBIC=c(K_eBIC,temp_res$K_eBIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_eBIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_eBIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_eBIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_eBIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+LS_ari=c(LS_ari,ari_record)
+#可视化
+
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "GCFLR-eBIC(LS)")
+  
+p4=p
+```
+## fd coefficient of CFLR-eBIC(LS)  
+```{r}
+file_list=paste("C:/users/spenc/desktop/simulation_results/new/real_dt/ls/2021/",dir("C:/users/spenc/desktop/simulation_results/new/real_dt/ls/2021"),sep="")
+#样例结果用于画图
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,30,0.2)
+temp_res=temp_res_2021
+fd_df=eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]])
+
+K_eBIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_2021
+K_eBIC=c(K_eBIC,temp_res$K_eBIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_eBIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_eBIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_eBIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_eBIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+LS_ari=c(LS_ari,ari_record)
+#可视化
+
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "CFLR-eBIC(LS)")
+  
+p5=p
+```
+## fd coefficient of CFLR-BIC(LS)  
+```{r}
+
+file_list=paste("C:/users/spenc/desktop/simulation_results/new/real_dt/ls/2021/",dir("C:/users/spenc/desktop/simulation_results/new/real_dt/ls/2021"),sep="")
+#样例结果用于画图
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,30,0.2)
+temp_res=temp_res_2021
+fd_df=eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[1]])
+
+K_BIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_2021
+K_BIC=c(K_BIC,temp_res$K_BIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_BIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_BIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_BIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_BIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+LS_ari=c(LS_ari,ari_record)
+#可视化
+
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "CFLR-BIC(LS)")
+  
+p6=p
+
+```
+## ARI summary
+```{r}
+LS_ari_mat=matrix(LS_ari,ncol = 3)
+LS_ari_plot=data.frame(CFLR_BIC=LS_ari_mat[,3],CFLR_eBIC=LS_ari_mat[,2],GCFLR_eBIC=LS_ari_mat[,1])
+colnames(LS_ari_plot)=c("CFLR-BIC(LS)","CFLR-eBIC(LS)","GCFLR-eBIC(LS)")
+```
+
+
+# visualization of fd coefficients  
+```{r}
+library(patchwork)
+p_list_lad=vector("list",3)
+p_list_lad[[1]]=p3;p_list_lad[[2]]=p2;p_list_lad[[3]]=p1
+p_lad=wrap_plots(p_list_lad, ncol = 3)
+
+
+p_list_ls=vector("list",3)
+p_list_ls[[1]]=p6;p_list_ls[[2]]=p5;p_list_ls[[3]]=p4
+p_ls=wrap_plots(p_list_ls, ncol = 3)
+
+
+```
+```{r}
+plot_parameter=c(14,12,0.5)
+p1=p1+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+p2=p2+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+p3=p3+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+p4=p4+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+p5=p5+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+p6=p6+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+```
+
+```{r}
+p_list_all=vector("list",6)
+p_list_all[[1]]=p6;p_list_all[[2]]=p5;p_list_all[[3]]=p4
+p_list_all[[4]]=p3;p_list_all[[5]]=p2;p_list_all[[6]]=p1
+p_all=wrap_plots(p_list_all, ncol = 3)
+#输出大小 w1000 h750
+p_all
+```
+
+# visualization of ari distributions  
+```{r}
+par(mfrow=c(1,2))
+boxplot(LS_ari_plot)
+boxplot(LAD_ari_plot)
+plot_dt=data.frame(type=c(rep(colnames(LS_ari_plot),each=1225),rep(colnames(LAD_ari_plot),each=1225)),value=c(as.numeric(as.matrix(LS_ari_plot)),as.numeric(as.matrix(LAD_ari_plot))))
+plot_dt$type=factor(plot_dt$type,levels = c(colnames(LS_ari_plot),colnames(LAD_ari_plot)))
+p_boxplot=ggplot(data=plot_dt,mapping = aes(x=type,y=value))+
+    geom_boxplot(fatten=1.5)+
+  labs(x="",y="ARI")+
+  theme(panel.background = element_rect(fill = "white", color = "black"),panel.grid.major  = element_line(color ="grey",linetype = "dotted"))+
+    scale_y_continuous(limits = c(0, 1))+
+     theme(axis.text.x=element_text(size=9,angle=0))
+plot_parameter=c(14,13,0.5)
+p_boxplot=p_boxplot+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+#图像大小 w1000 h500
+```
+
+
+# data decriptive visualizations   
+```{r}
+record_mat_ori=read.csv("C:/users/spenc/desktop/simulation_results/new/real_dt/fly_egg_record.csv")
+fly_info_df=read.csv("C:/users/spenc/desktop/simulation_results/new/real_dt/fly_info_df.csv")
+record_mat=apply(record_mat_ori[,-1],2,as.numeric)
+#数据筛选-选取前30天的产卵记录还有剩余存活天数
+demand_index=fly_info_df$life>30
+fly_info_df_needed=fly_info_df[demand_index,]
+record_mat_needed=t(record_mat[demand_index,1:30])#取对数
+life_time_remain=as.numeric(fly_info_df_needed$life)-30
+demand_index=apply(record_mat_needed,2,sum)>0
+basis_need=create.bspline.basis(c(seq(1,30,3),30),norder = 4)
+fd_test=smooth.basis(1:30,record_mat_needed,basis_need)
+fd_plot_mat=as.matrix(eval.fd(sample_t,fd_test$fd[demand_index,]))
+fd_plot_df=data.frame(time=rep(sample_t,ncol(fd_plot_mat)),value=as.numeric(fd_plot_mat),
+                      group=rep(1:ncol(fd_plot_mat),each=length(sample_t)))
+
+#平滑结果
+p_smoothed=ggplot(fd_plot_df,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))
+
+
+basis_need=create.bspline.basis(c(seq(1,30,3),30),norder = 4)
+fd_test=smooth.basis(1:30,record_mat_needed,basis_need)
+fd_pca=pca.fd(fd_test$fd,nharm = 2)
+
+
+pca_score=data.frame(fd_pca$scores)
+plot_pca_score_df=data.frame(score1=pca_score$X1,score2=pca_score$X2,value=life_time_remain)
+#主成分得分图
+p_pc_scores=ggplot(data=plot_pca_score_df,mapping = aes(x=score1,y=score2,color=value))+
+  geom_point()+
+  scale_color_gradient(low = "blue",high = "red")+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+xlab("1st FPC scores")+ylab("2nd FPC scores")
+
+#主成分图
+fpc_mat=as.matrix(eval.fd(sample_t,fd_pca$harmonics))
+fpc_mat[,2]=fpc_mat[,2]
+fpc_df=data.frame(time=rep(sample_t,2),value=as.numeric(fpc_mat),group=rep(1:2,each=length(sample_t)))
+p_fpc=ggplot(data=fpc_df,mapping = aes(x=time,y=value,color=factor(group)))+
+  geom_line()+scale_color_manual(values = c("1"="red","2"="blue"))+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  theme(legend.position = "none")
+
+
+#全部三个图
+plot_fda=vector("list",3)
+plot_parameter=c(14,12,0.5)
+p_smoothed=p_smoothed+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))#+labs(caption = "(a)") + theme(plot.caption = element_text(hjust = 0.5, size = 12))#, face = "bold"
+p_fpc=p_fpc+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))#+labs(caption = "(b)") + theme(plot.caption = element_text(hjust = 0.5, size = 12))
+p_pc_scores=p_pc_scores+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))#+ labs(caption = "(c)") + theme(plot.caption = element_text(hjust = 0.5, size = 12))
+
+plot_fda[[1]]=p_smoothed;plot_fda[[2]]=p_fpc;plot_fda[[3]]=p_pc_scores
+library(patchwork)
+p_fda=wrap_plots(plot_fda[1:3], ncol = 3)
+
+
+
+p_fda
+#画图参数 w1000 h450
+p_smoothed
+p_fpc
+p_pc_scores
+#小图 400 400
+```
+
