@@ -1,0 +1,335 @@
+---
+title: "simulation3"
+author: "SpencerWang"
+date: "2024-07-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## preparation
+```{r}
+setwd("C:/Users/Spenc/Desktop/manual_packages/FdaCluReg")
+install.packages("C:/Users/Spenc/Desktop/manual_packages/FdaCluReg_0.0.0.18.tar.gz")
+library(FdaCluReg)
+color_seq=c("red","blue","orange","purple","green","grey","#cd5c5c","#006400",
+            "#FF00FF","#d2691e","#00FFFF","#808000","yellow","black","#FF4000")
+```
+
+
+## parallel algorithm for example 3
+```{r}
+parallel_simulation3=function(seed_seq,method="ls",type=c(TRUE,TRUE))
+{
+library(FdaCluReg)
+set.seed(seed_seq)
+fun_1=function(t){return(sin((pi*t))*(2^0.5))}#basis fun 1
+fun_2=function(t){return(sin((2*pi*t))*(2^0.5))}#basis fun 2
+
+function_list=list(fun_1,fun_2)#function list
+sample_t=seq(0,1,0.01)#sampling time 
+group_scale=c(100,100,100)#group scales
+N=sum(group_scale)#number of samples
+fda_coef_df_list=NULL
+fda_coef_df1=cbind(rnorm(N,0,1),rnorm(N,0,2))#basis coef. for X construction
+fda_coef_df2=cbind(rnorm(N,0,1),rnorm(N,0,2))#basis coef. for X construction
+fda_coef_df_list=list(fda_coef_df1,fda_coef_df2)#for multi variables
+error_sd=0.2#standard error of observation error 
+xij_temp_1=xij_fun(function_list=function_list,fda_coef_df=fda_coef_df1,sample_t=sample_t,error_sd = 0.2)
+xij_temp_2=xij_fun(function_list=function_list,fda_coef_df=fda_coef_df2,sample_t=sample_t,error_sd = 0.2)
+
+xij_list=list(xij_temp_1,xij_temp_2)#for multi variables
+
+## generating Y
+###parameter setting  
+reg_error1=rnorm(N,0,1)*0.5#epsilon-1
+reg_error2=rt(N,3)*0.5#epsilon-2
+reg_error3=(rchisq(N,3)-3)*0.5#epsilon-3
+#
+reg_var1=rep(1,N)#sigma-1
+reg_var2=0.5*(fda_coef_df1[,1]+fda_coef_df1[,2]+fda_coef_df2[,1]+fda_coef_df2[,2])#sigma-2
+#
+reg_coef_df_list=NULL
+reg_coef_df_var1=as.matrix(cbind(c(rep(1,200),rep(-1,100)),c(rep(1,100),rep(-1,200))))
+reg_coef_df_var2=as.matrix(cbind(c(rep(-1,200),rep(1,100)),c(rep(1,100),rep(0.5,100),rep(-1,100))))
+reg_coef_df_list=list(reg_coef_df_var1,reg_coef_df_var2)#for multi variables
+reg_intercept=c(rep(3,100),rep(0,100),rep(-3,100))
+
+##########################
+yi_temp_n_homo=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var1,
+               reg_error = reg_error1,seed = seed_seq,interval = c(0,1))
+yi_temp_t_homo=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var1,
+               reg_error = reg_error2,seed = seed_seq,interval = c(0,1))
+yi_temp_chisq_homo=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var1,
+               reg_error = reg_error3,seed = seed_seq,interval = c(0,1))
+
+
+########################
+yi_temp_n_heter=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var2,
+               reg_error = reg_error1,seed = seed_seq,interval = c(0,1))
+yi_temp_t_heter=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var2,
+               reg_error = reg_error2,seed = seed_seq,interval = c(0,1))
+yi_temp_chisq_heter=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var2,
+               reg_error = reg_error3,seed = seed_seq,interval = c(0,1))
+
+Y_list=vector("list",6);
+Y_list[[1]]=yi_temp_n_homo;Y_list[[2]]=yi_temp_t_homo;Y_list[[3]]=yi_temp_chisq_homo
+Y_list[[4]]=yi_temp_n_heter;Y_list[[5]]=yi_temp_t_heter;Y_list[[6]]=yi_temp_chisq_heter
+names(Y_list)=c("homo_n","homo_t","homo_chisq","heter_n","heter_t","heter_chisq")
+
+
+library(fda)
+basis_need=fourier_basis=create.fourier.basis(c(0,1),10)# basis function
+#smoothing 
+sample_t=seq(0,1,0.01)#sampling time points
+K_seq=2:4
+true_label=c(rep(1,100),rep(2,100),rep(3,100))
+var_ratio=0.9  
+rounds=110
+burning_period=10
+lambda=1
+ncomp_l=2
+
+simulation3_res=simulation_results_function(X_list =xij_list,
+                             Y=Y_list,
+                             basis=basis_need,
+                             sample_t=sample_t,
+                             var_ratio=var_ratio,
+                             K_max=5,
+                             true_label=true_label,
+                             rounds=rounds,
+                             burning_period=burning_period,
+                             lambda = lambda,
+                             method=method,
+                             ncomp_u=10,ncomp_l=ncomp_l,seed=seed_seq,type = type)
+save(simulation3_res,file = paste("C:/users/spenc/desktop/simulation_results/new/sim3/ls/s3_",method,seed_seq,".RData",sep = ""))
+print(seed_seq)
+}
+
+
+```
+
+
+
+## algorithm implementation
+```{r}
+num_cores=10
+library(parallel)
+cl=makeCluster(num_cores)
+clusterExport(cl,  envir = environment(),varlist =c("color_seq"))
+parLapply(cl,1:50,parallel_simulation3,method="lad",type=c(TRUE,TRUE))
+parLapply(cl,1:50,parallel_simulation3,method="ls",type=c(TRUE,TRUE))
+```
+ 
+
+## call for simulation results
+```{r}
+library(fda)
+temp_dir_path=c("C:/users/spenc/desktop/simulation_results/new/sim3/ls",
+                "C:/users/spenc/desktop/simulation_results/new/sim3/lad",
+                "C:/users/spenc/desktop/simulation_results/new/sim3/lad_gibbs")
+dir_type=c("LS","LAD","LAD_Gibbs")
+
+
+stable_ari=function(label_mat)
+{
+  ari_seq=NULL
+  for (i in 1:(ncol(label_mat)-1))
+    {for (j in (i+1):ncol(label_mat))
+    {ari_seq=igraph::compare(label_mat[,i],label_mat[,j],method="adjusted.rand")}}
+  return(ari_seq)
+  }
+for (tt in c(1,2,4)) 
+{
+
+temp_dir=dir(temp_dir_path[tt])
+file_num=length(temp_dir)
+fun_1=function(t){return(sin((pi*t))*(2^0.5))}#basis fun 1
+fun_2=function(t){return(sin((2*pi*t))*(2^0.5))}#basis fun 2
+height_seq=NULL
+K_max=5
+
+
+real_beta_function1_1=function(x){return(fun_1(x)+fun_2(x))}
+real_beta_function1_2=function(x){return(fun_1(x)-fun_2(x))}
+real_beta_function1_3=function(x){return(-fun_1(x)-fun_2(x))}
+
+real_beta_function2_1=function(x){return(-fun_1(x)+fun_2(x))}
+real_beta_function2_2=function(x){return(-fun_1(x)+0.5*fun_2(x))}
+real_beta_function2_3=function(x){return(fun_1(x)-fun_2(x))}
+
+beta_function_list_1=c(list(real_beta_function1_1),list(real_beta_function1_2),list(real_beta_function1_3))
+beta_function_list_2=c(list(real_beta_function2_1),list(real_beta_function2_2),list(real_beta_function2_3))
+real_label=rep(1:3,each=100)
+N=length(real_label)
+
+
+empty_assessment_BIC=matrix(rep(0,12*3),ncol = 3)
+empty_assessment_eBIC=matrix(rep(0,12*3),ncol = 3)
+empty_k_BIC=rep(0,12)
+empty_k_eBIC=rep(0,12)
+empty_mse1_BIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+empty_mse1_eBIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+empty_mse2_BIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+empty_mse2_eBIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+#######################stability indicated by ARI
+empty_label_record_BIC=vector("list",2)
+empty_label_record_eBIC=vector("list",2)
+
+for (i in 1:length(temp_dir))
+{
+  load(paste(temp_dir_path[tt],temp_dir[i],sep = "/"))
+  temp_res=simulation3_res
+  
+  empty_assessment_BIC=matrix(as.numeric(temp_res$assement_all_mat_BIC),ncol = 3)+empty_assessment_BIC
+  empty_k_BIC=empty_k_BIC+temp_res$selected_K_2021_BIC
+  empty_assessment_eBIC=matrix(as.numeric(temp_res$assement_all_mat_eBIC),ncol = 3)+empty_assessment_eBIC
+  empty_k_eBIC=empty_k_eBIC+temp_res$selected_K_2021_eBIC
+
+ 
+  #j=1  gibbs; j=2  2021
+  j_seq=1:2
+  if(tt%in%c(2:3)){j_seq=c(2)}
+  for (j in j_seq) 
+  {
+  empty_error1_temp_file_BIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+  empty_error1_temp_file_eBIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+  empty_error2_temp_file_BIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+  empty_error2_temp_file_eBIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+    for (l in 1:6) 
+    {
+      temp_label_BIC=as.numeric(temp_res[[j]][[l]]$selected_res_BIC$labels[[1]])
+      temp_label_eBIC=as.numeric(temp_res[[j]][[l]]$selected_res_eBIC$labels[[1]])
+      ###稳定性
+      empty_label_record_BIC[[j]]=c(empty_label_record_BIC[[j]],temp_label_BIC)
+      empty_label_record_eBIC[[j]]=c(empty_label_record_eBIC[[j]],temp_label_eBIC)
+
+      N=length(temp_label_BIC)
+      temp_fd_list_BIC=temp_res[[j]][[l]]$selected_res_BIC$beta_fd[[1]]
+      temp_fd_list_eBIC=temp_res[[j]][[l]]$selected_res_eBIC$beta_fd[[1]]
+      temp_k_selected_BIC=temp_res$selected_K_2021_BIC[(j-1)*6+l]
+      temp_k_selected_eBIC=temp_res$selected_K_2021_eBIC[(j-1)*6+l]
+      temp_se1_seq_BIC=NULL
+      temp_se1_seq_eBIC=NULL
+      temp_se2_seq_BIC=NULL
+      temp_se2_seq_eBIC=NULL
+
+      for (sample_index in 1:N) 
+      {
+        beta_fun1_BIC=function(x){return(eval.fd(x,temp_fd_list_BIC[[temp_label_BIC[sample_index]]][1]))}
+        beta_fun1_eBIC=function(x){return(eval.fd(x,temp_fd_list_eBIC[[temp_label_eBIC[sample_index]]][1]))}
+        beta_fun2_BIC=function(x){return(eval.fd(x,temp_fd_list_BIC[[temp_label_BIC[sample_index]]][2]))}
+        beta_fun2_eBIC=function(x){return(eval.fd(x,temp_fd_list_eBIC[[temp_label_eBIC[sample_index]]][2]))}
+        
+        temp_real_beta1=beta_function_list_1[[real_label[sample_index]]]
+        temp_real_beta2=beta_function_list_2[[real_label[sample_index]]]
+        
+        temp_se1_BIC=integrate(function(x){return((beta_fun1_BIC(x)-temp_real_beta1(x))^2)},0,1)$value
+        temp_se1_eBIC=integrate(function(x){return((beta_fun1_eBIC(x)-temp_real_beta1(x))^2)},0,1)$value
+        temp_se2_BIC=integrate(function(x){return((beta_fun2_BIC(x)-temp_real_beta2(x))^2)},0,1)$value
+        temp_se2_eBIC=integrate(function(x){return((beta_fun2_eBIC(x)-temp_real_beta2(x))^2)},0,1)$value
+
+        temp_se1_seq_BIC=c(temp_se1_seq_BIC,temp_se1_BIC)
+        temp_se1_seq_eBIC=c(temp_se1_seq_eBIC,temp_se1_eBIC)
+        temp_se2_seq_BIC=c(temp_se2_seq_BIC,temp_se2_BIC)
+        temp_se2_seq_eBIC=c(temp_se2_seq_eBIC,temp_se2_eBIC)
+      }
+      empty_error1_temp_file_BIC[l,]=temp_se1_seq_BIC
+      empty_error1_temp_file_eBIC[l,]=temp_se1_seq_eBIC      
+      empty_error2_temp_file_BIC[l,]=temp_se2_seq_BIC
+      empty_error2_temp_file_eBIC[l,]=temp_se2_seq_eBIC
+    }
+     temp_mse1_BIC=apply(empty_error1_temp_file_BIC,1,mean)
+     temp_mse1_eBIC=apply(empty_error1_temp_file_eBIC,1,mean)
+     temp_mse2_BIC=apply(empty_error2_temp_file_BIC,1,mean)
+     temp_mse2_eBIC=apply(empty_error2_temp_file_eBIC,1,mean)
+     
+     empty_mse1_BIC[[j]]=empty_mse1_BIC[[j]]+temp_mse1_BIC
+     empty_mse1_eBIC[[j]]=empty_mse1_eBIC[[j]]+temp_mse1_eBIC
+     empty_mse2_BIC[[j]]=empty_mse2_BIC[[j]]+temp_mse2_BIC
+     empty_mse2_eBIC[[j]]=empty_mse2_eBIC[[j]]+temp_mse2_eBIC
+  }
+}
+  rownames(empty_assessment_BIC)=paste(rownames(temp_res$assement_all_mat_BIC),"BIC",sep = "_")
+  rownames(empty_assessment_eBIC)=paste(rownames(temp_res$assement_all_mat_eBIC),"BIC",sep = "_")
+  colnames(empty_assessment_BIC)=paste(colnames(temp_res$assement_all_mat_BIC),"BIC",sep = "_")
+  colnames(empty_assessment_eBIC)=paste(colnames(temp_res$assement_all_mat_eBIC),"BIC",sep = "_")
+
+###########stability indicated by ARI
+stable_ari_BIC=rep(0,12)
+stable_ari_eBIC=rep(0,12)
+for (j in j_seq) 
+{
+  temp_reocrd_BIC=empty_label_record_BIC[[j]];record_mat1_BIC=matrix(temp_reocrd_BIC,ncol = file_num)
+  temp_reocrd_eBIC=empty_label_record_eBIC[[j]];record_mat1_eBIC=matrix(temp_reocrd_eBIC,ncol = file_num)
+  for (l in 1:6)
+  {
+    temp_index=(l-1)*N+(1:N);
+    temp_record_mat_BIC=record_mat1_BIC[temp_index,]
+    temp_record_mat_eBIC=record_mat1_eBIC[temp_index,]
+    temp_ari_seq_BIC=stable_ari(temp_record_mat_BIC);mean_ari_BIC=mean(temp_ari_seq_BIC)
+    temp_ari_seq_eBIC=stable_ari(temp_record_mat_eBIC);mean_ari_eBIC=mean(temp_ari_seq_eBIC)
+    stable_ari_BIC[(j-1)*6+l]=mean_ari_BIC
+    stable_ari_eBIC[(j-1)*6+l]=mean_ari_eBIC
+  }}
+  
+res_k_BIC=empty_k_BIC/length(temp_dir)
+res_k_eBIC=empty_k_eBIC/length(temp_dir)
+res_assement_BIC=empty_assessment_BIC/length(temp_dir)
+res_assement_eBIC=empty_assessment_eBIC/length(temp_dir)
+
+res_mse1_gibbs_BIC=empty_mse1_BIC[[1]]/length(temp_dir)
+res_mse1_gibbs_eBIC=empty_mse1_eBIC[[1]]/length(temp_dir)
+res_mse1_2021_BIC=empty_mse1_BIC[[2]]/length(temp_dir)
+res_mse1_2021_eBIC=empty_mse1_eBIC[[2]]/length(temp_dir)
+
+res_mse2_gibbs_BIC=empty_mse2_BIC[[1]]/length(temp_dir)
+res_mse2_gibbs_eBIC=empty_mse2_eBIC[[1]]/length(temp_dir)
+res_mse2_2021_BIC=empty_mse2_BIC[[2]]/length(temp_dir)
+res_mse2_2021_eBIC=empty_mse2_eBIC[[2]]/length(temp_dir)
+
+
+
+res_assement_reorder=rbind(res_assement_BIC[(1:6)*2-1,],res_assement_BIC[(1:6)*2,],
+                           res_assement_eBIC[(1:6)*2-1,],res_assement_eBIC[(1:6)*2,])
+res_all_df=data.frame(cbind(res_assement_reorder,k=c(res_k_BIC,res_k_eBIC),
+                            mse1=c(res_mse1_gibbs_BIC,res_mse1_2021_BIC,res_mse1_gibbs_eBIC,res_mse1_2021_eBIC),
+                            mse2=c(res_mse2_gibbs_BIC,res_mse2_2021_BIC,res_mse2_gibbs_eBIC,res_mse2_2021_eBIC),
+                            stable_ari=c(stable_ari_BIC,stable_ari_eBIC)))
+rownames(res_all_df)=paste(c("homo-n-gibbs","homo-t-gibbs","homo-chisq-gibbs",
+                       "heter-n-gibbs","heter-t-gibbs","heter-chisq-gibbs",
+                       "homo-n-2021","homo-t-2021","homo-chisq-2021",
+                       "heter-n-2021","heter-t-2021","heter-chisq-2021"),rep(c("BIC","eBIC"),each=12),sep = "-")
+res_all_df=data.frame(matrix(unlist(strsplit(rownames(res_all_df),"-")),byrow = T,nrow = nrow(res_all_df)),res_all_df)
+colnames(res_all_df)=c("heter_homo","error","method","IC","ARI","RI","NMI","K","MSE1","MSE2","ARI_stable")
+
+write.csv(res_all_df,paste("C:/users/spenc/desktop/simulation_results/new/sample3_",dir_type[tt],".csv",sep=""))
+  
+}
+```

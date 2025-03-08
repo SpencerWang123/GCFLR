@@ -1,0 +1,507 @@
+---
+title: "FdaCluReg实证分析-空气污染"
+output: html_document
+date: "2024-06-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## data preparation from the original dataset
+### observations
+```{r}
+#2023
+file_list1=dir("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/dt2324")
+#读取样例数据
+sample_dt1=read.csv(paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/dt2324",file_list1[1],sep="/"))
+sample_dt1=as.data.frame(sample_dt1)
+#2022
+file_list2=dir("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/dt22")
+#读取样例数据
+sample_dt2=read.csv(paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/dt22",file_list2[1],sep="/"))
+sample_dt2=as.data.frame(sample_dt2)
+
+#file_list_city
+#2023
+file_list_city1=dir("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/city23")
+#读取样例数据
+sample_dt_city1=read.csv(paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/city23",file_list_city1[1],sep="/"))
+sample_dt_city1=as.data.frame(sample_dt_city1)
+
+#2022
+file_list_city2=dir("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/city22")
+#读取样例数据
+sample_dt_city2=read.csv(paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/city22",file_list_city2[1],sep="/"))
+sample_dt_city2=as.data.frame(sample_dt_city2)
+```
+
+### city   
+```{r eval=FALSE}
+data_list_city1=vector("list",7)
+data_list_city2=vector("list",7)
+var_needed=c("AQI","PM2.5_24h","PM10_24h","SO2_24h",
+"NO2_24h","O3_24h","CO_24h")
+#
+date_df_city1=c("date","hour")
+date_df_city2=c("date","hour")
+file_needed_city1=file_list_city1[1:365]
+file_needed_city2=file_list_city2[1:365]
+dir_list_city1=paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/city23",file_needed_city1,sep = "/")
+dir_list_city2=paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data/city22",file_needed_city2,sep = "/")
+
+
+for (f in 1:length(dir_list_city1) )
+{
+temp_file=read.csv(dir_list_city1[f])
+date_df_city1=rbind(date_df_city1,temp_file[,c(1,2)])#日期存储
+for (v in 1:length(var_needed))
+{
+var_name=var_needed[v]
+temp_var_dt=temp_file[grep(var_name,temp_file[,3]),-c(1:3)]
+if(f==1){data_list_city1[[v]]=temp_var_dt}else{
+data_list_city1[[v]]=data_list_city1[[v]][,colnames(data_list_city1[[v]])%in%colnames(temp_var_dt)]
+temp_var_dt=temp_var_dt[,colnames(temp_var_dt)%in%colnames(data_list_city1[[v]])]
+temp_var_dt=temp_var_dt[,match(colnames(data_list_city1[[v]]),colnames(temp_var_dt))]
+data_list_city1[[v]]=rbind(data_list_city1[[v]],temp_var_dt)
+}
+}
+}
+names(data_list_city1)=var_needed
+nrow(data_list_city1$AQI)
+data_list_city2=vector("list",7)
+var_needed=c("AQI","PM2.5_24h","PM10_24h","SO2_24h",
+"NO2_24h","O3_24h","CO_24h")
+#
+
+for (f in 1:length(dir_list_city2) )
+{
+temp_file=read.csv(dir_list_city2[f])
+date_df_city2=rbind(date_df_city2,temp_file[,c(1,2)])#日期存储
+for (v in 1:length(var_needed))
+{
+var_name=var_needed[v]
+temp_var_dt=temp_file[grep(var_name,temp_file[,3]),-c(1:3)]
+if(f==1){data_list_city2[[v]]=temp_var_dt}else{
+data_list_city2[[v]]=data_list_city2[[v]][,colnames(data_list_city2[[v]])%in%colnames(temp_var_dt)]
+temp_var_dt=temp_var_dt[,colnames(temp_var_dt)%in%colnames(data_list_city2[[v]])]
+temp_var_dt=temp_var_dt[,match(colnames(data_list_city2[[v]]),colnames(temp_var_dt))]
+data_list_city2[[v]]=rbind(data_list_city2[[v]],temp_var_dt)
+}
+}
+}
+names(data_list_city2)=var_needed
+save(data_list_city1,file = "/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data_2023city.RData")
+save(data_list_city2,file = "/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/data_2022city.RData")
+```
+
+## load processed data
+```{r}
+setwd("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据")
+load("data_2023.RData")
+load("data_2022.RData")
+load("data_2023city.RData")
+load("data_2022city.RData")
+var_needed=c("AQI","PM2.5_24h","PM10_24h","SO2_24h",
+"NO2_24h","O3_24h","CO_24h")
+```
+
+
+
+### extract data city by city     
+```{r}
+data_list=data_list_city1
+#缺失值填补
+data_list_fill=vector("list",length = length(data_list))
+na_station=rep(0,ncol(data_list$AQI))
+for (i in 1:length(data_list))
+{
+temp_dt=data_list[[i]]
+na_mean_fill=function(x){x[is.na(x)]=mean(x,na.rm=T);return(x)}
+data_list_fill[[i]]=as.matrix(apply(temp_dt,2,na_mean_fill))
+na_station=rbind(na_station,is.na(data_list_fill[[i]][1,]))
+}
+no_na_station=apply(na_station,2,sum)==0
+for (i in 1:length(data_list))
+{
+temp_dt=data_list_fill[[i]]
+data_list_fill[[i]]=temp_dt[,no_na_station]
+}
+names(data_list_fill)=var_needed
+aqi1=data_list_fill$AQI
+pm10=data_list_fill$PM10_24h
+pm25=data_list_fill$PM2.5_24h
+no2=data_list_fill$NO2_24h
+so2=data_list_fill$SO2_24h
+o3=data_list_fill$O3_24h
+co=data_list_fill$CO_24h
+data_list_fill_city1=data_list_fill
+no_na_station_city1=no_na_station
+
+###############2022####################
+data_list=data_list_city2
+#缺失值填补
+data_list_fill=vector("list",length = length(data_list))
+na_station=rep(0,ncol(data_list$AQI))
+for (i in 1:length(data_list))
+{
+temp_dt=data_list[[i]]
+na_mean_fill=function(x){x[is.na(x)]=mean(x,na.rm=T);return(x)}
+data_list_fill[[i]]=as.matrix(apply(temp_dt,2,na_mean_fill))
+na_station=rbind(na_station,is.na(data_list_fill[[i]][1,]))
+}
+no_na_station=apply(na_station,2,sum)==0
+for (i in 1:length(data_list))
+{
+temp_dt=data_list_fill[[i]]
+data_list_fill[[i]]=temp_dt[,no_na_station]
+}
+names(data_list_fill)=var_needed
+aqi2=data_list_fill$AQI
+pm10=data_list_fill$PM10_24h
+pm25=data_list_fill$PM2.5_24h
+no2=data_list_fill$NO2_24h
+so2=data_list_fill$SO2_24h
+o3=data_list_fill$O3_24h
+co=data_list_fill$CO_24h
+data_list_fill_city2=data_list_fill
+no_na_station_city2=no_na_station
+```
+
+
+```{r}
+library(FdaCluReg)
+aqi_y1_city=apply(data_list_fill_city1$AQI,2,mean)
+aqi_y2_city=apply(data_list_fill_city2$AQI,2,mean)
+
+T_max1_city=nrow(data_list_fill_city1$AQI)
+T_max2_city=nrow(data_list_fill_city2$AQI)
+library(fda)
+
+```
+
+
+## parallel algorithm and algorithm implementation
+
+```{r eval=FALSE}
+city_gibbs=function(seed_seq=1,method="ls")
+{
+  library(fda)
+  library(FdaCluReg)
+  temp_gibbs=gibbs_clusterwise_regression_auto(X_list = data_list_fill_city1[2:6],
+                                          Y=as.numeric(aqi_y1_city),
+                                          sample_t = c(1:T_max1_city),
+                                          basis=create.fourier.basis(c(1,T_max1_city),nbasis = 100),
+                                          var_ratio=0.9, 
+                                          K_max = 4 ,
+                                          true_label=rep(1,sum(no_na_station_city1)),
+                                          method = method,
+                                          ncomp_u = 10, 
+                                          ncomp_l = 2, 
+                                          seed = seed_seq,
+                                          rounds=110,burning_period = 10,lambda = 0.2)
+  save(temp_gibbs,file = paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/sim_gibbs/",method,"/city",seed_seq,method,".RData",sep=""))
+ print(seed_seq)
+}
+
+city_2021=function(seed_seq=1,method="ls")
+{
+  library(fda)
+  library(FdaCluReg)
+  temp_res=clusterwise_reg_2021_auto(X_list = data_list_fill_city1[2:6],
+                                     Y=as.numeric(aqi_y1_city),
+                                     sample_t = c(1:T_max1_city),
+                                     basis=create.fourier.basis(c(1,T_max1_city),nbasis = 100), 
+                                     var_ratio=0.9, 
+                                     K_max = 10, 
+                                     true_label=rep(1,sum(no_na_station_city1)), 
+                                     method = method, 
+                                     ncomp_u = 10, ncomp_l = 2, 
+                                     seed = seed_seq)
+  save(temp_res,file = paste("/Users/wangzhen/Library/Mobile Documents/com~apple~CloudDocs/Project/函数型数据回归聚类/sim_2021/",method,"/city",seed_seq,method,".RData",sep=""))
+  return(c(temp_res$selected_res_BIC$labels[[1]],temp_res$selected_res_eBIC$labels[[1]]))
+}
+
+
+
+
+num_cores=10
+library(parallel)
+cl=makeCluster(num_cores)
+clusterExport(cl,  envir = environment(),varlist =c("data_list_fill_city1",                                           "aqi_y1_city","T_max1_city","no_na_station_city1","city_gibbs"))
+
+res_city_2021_ls=parLapply(cl,(1:50),city_2021,method="ls")
+res_city_2021_lad=parLapply(cl,(1:50),city_2021,method="lad")
+res_city_gibbs=parLapply(cl,(1:50),city_gibbs,method="ls")
+res_city_gibbs=parLapply(cl,(1:50),city_gibbs,method="lad")
+stopCluster(cl)
+```
+
+## summarize analysis result 
+```{r}
+p=4
+#########ls
+########
+ls_dir=dir("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_2021/ls")
+nf=length(ls_dir)
+ls_label_BIC=NULL
+ls_label_eBIC=NULL
+K_seq_BIC=NULL
+K_seq_eBIC=NULL
+fd_coef_df_BIC=rep(1,101)
+fd_coef_df_eBIC=rep(1,101)
+for (i in 1:length(ls_dir)) 
+{
+load(paste("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_2021/ls/",ls_dir[i],sep = ""))
+K_seq_BIC=c(K_seq_BIC,temp_res$K_BIC)
+K_seq_eBIC=c(K_seq_eBIC,temp_res$K_eBIC)
+ls_label_BIC=c(ls_label_BIC,as.numeric(temp_res$selected_res_BIC$labels[[1]]))
+ls_label_eBIC=c(ls_label_eBIC,as.numeric(temp_res$selected_res_eBIC$labels[[1]]))
+demand_cluster_BIC=as.numeric(temp_res$selected_res_BIC$labels[[1]][1])
+demand_cluster_eBIC=as.numeric(temp_res$selected_res_eBIC$labels[[1]][1])
+demand_fd_BIC=temp_res$selected_res_BIC$beta_fd[[1]][[demand_cluster_BIC]][p]
+demand_fd_eBIC=temp_res$selected_res_eBIC$beta_fd[[1]][[demand_cluster_eBIC]][p]
+fd_coef_df_BIC=cbind(fd_coef_df_BIC,demand_fd_BIC$coefs)
+fd_coef_df_eBIC=cbind(fd_coef_df_eBIC,demand_fd_eBIC$coefs)
+}
+fd_coef_df_BIC=fd_coef_df_BIC[,-1]
+fd_coef_df_eBIC=fd_coef_df_eBIC[,-1]
+demand_fd_BIC$coefs=fd_coef_df_BIC
+demand_fd_eBIC$coefs=fd_coef_df_eBIC
+
+ls_fd_BIC=demand_fd_BIC
+ls_fd_eBIC=demand_fd_eBIC
+ls_k_BIC=K_seq_BIC
+ls_k_eBIC=K_seq_eBIC
+#########lad
+########
+lad_dir=dir("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_2021/lad")
+nf=length(lad_dir)
+lad_label_BIC=NULL
+lad_label_eBIC=NULL
+K_seq_BIC=NULL
+K_seq_eBIC=NULL
+fd_coef_df_BIC=rep(1,101)
+fd_coef_df_eBIC=rep(1,101)
+for (i in 1:length(lad_dir)) 
+{
+load(paste("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_2021/lad/",lad_dir[i],sep = ""))
+K_seq_BIC=c(K_seq_BIC,temp_res$K_BIC)
+K_seq_eBIC=c(K_seq_eBIC,temp_res$K_eBIC)
+lad_label_BIC=c(lad_label_BIC,as.numeric(temp_res$selected_res_BIC$labels[[1]]))
+lad_label_eBIC=c(lad_label_eBIC,as.numeric(temp_res$selected_res_eBIC$labels[[1]]))
+demand_cluster_BIC=as.numeric(temp_res$selected_res_BIC$labels[[1]][1])
+demand_cluster_eBIC=as.numeric(temp_res$selected_res_eBIC$labels[[1]][1])
+demand_fd_BIC=temp_res$selected_res_BIC$beta_fd[[1]][[demand_cluster_BIC]][p]
+demand_fd_eBIC=temp_res$selected_res_eBIC$beta_fd[[1]][[demand_cluster_eBIC]][p]
+fd_coef_df_BIC=cbind(fd_coef_df_BIC,demand_fd_BIC$coefs)
+fd_coef_df_eBIC=cbind(fd_coef_df_eBIC,demand_fd_eBIC$coefs)
+}
+fd_coef_df_BIC=fd_coef_df_BIC[,-1]
+fd_coef_df_eBIC=fd_coef_df_eBIC[,-1]
+demand_fd_BIC$coefs=fd_coef_df_BIC
+demand_fd_eBIC$coefs=fd_coef_df_eBIC
+
+lad_fd_BIC=demand_fd_BIC
+lad_fd_eBIC=demand_fd_eBIC
+lad_k_BIC=K_seq_BIC
+lad_k_eBIC=K_seq_eBIC
+#########ls gibbs
+gibbs_dir_ls=dir("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_gibbs/ls")
+nf=length(gibbs_dir_ls)
+gibbs_label_BIC=NULL
+gibbs_label_eBIC=NULL
+K_seq_BIC=NULL
+K_seq_eBIC=NULL
+fd_coef_df_BIC=rep(1,101)
+fd_coef_df_eBIC=rep(1,101)
+for (i in 1:nf) 
+{
+load(paste("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_gibbs/ls/",gibbs_dir_ls[i],sep = ""))
+K_seq_BIC=c(K_seq_BIC,temp_gibbs$K_BIC)
+K_seq_eBIC=c(K_seq_eBIC,temp_gibbs$K_eBIC)
+gibbs_label_BIC=c(gibbs_label_BIC,as.numeric(temp_gibbs$selected_res_BIC$labels[[1]]))
+gibbs_label_eBIC=c(gibbs_label_eBIC,as.numeric(temp_gibbs$selected_res_eBIC$labels[[1]]))
+demand_cluster_BIC=temp_gibbs$selected_res_BIC$labels[[1]][1]
+demand_cluster_eBIC=temp_gibbs$selected_res_eBIC$labels[[1]][1]
+demand_fd_BIC=temp_gibbs$selected_res_BIC$beta_fd[[1]][[demand_cluster_BIC]][p]
+demand_fd_eBIC=temp_gibbs$selected_res_eBIC$beta_fd[[1]][[demand_cluster_eBIC]][p]
+fd_coef_df_BIC=cbind(fd_coef_df_BIC,demand_fd_BIC$coefs)
+fd_coef_df_eBIC=cbind(fd_coef_df_eBIC,demand_fd_eBIC$coefs)
+}
+fd_coef_df_BIC=fd_coef_df_BIC[,-1]
+fd_coef_df_eBIC=fd_coef_df_eBIC[,-1]
+demand_fd_BIC$coefs=fd_coef_df_BIC
+demand_fd_eBIC$coefs=fd_coef_df_eBIC
+
+gibbs_fd_BIC_ls=demand_fd_BIC
+gibbs_k_BIC_ls=K_seq_BIC
+gibbs_fd_eBIC_ls=demand_fd_eBIC
+gibbs_k_eBIC_ls=K_seq_eBIC
+gibbs_label_BIC_ls=gibbs_label_BIC
+gibbs_label_eBIC_ls=gibbs_label_eBIC
+
+###########lad gibbs
+gibbs_dir_lad=dir("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_gibbs/lad")
+nf=length(gibbs_dir_lad)
+gibbs_label_BIC=NULL
+gibbs_label_eBIC=NULL
+K_seq_BIC=NULL
+K_seq_eBIC=NULL
+fd_coef_df_BIC=rep(1,101)
+fd_coef_df_eBIC=rep(1,101)
+for (i in 1:nf) 
+{
+load(paste("F:/iCloudDrive/Project/聚类回归文章/数据部分/模拟数据-气象数据/sim_gibbs/lad/",gibbs_dir_lad[i],sep = ""))
+K_seq_BIC=c(K_seq_BIC,temp_gibbs$K_BIC)
+K_seq_eBIC=c(K_seq_eBIC,temp_gibbs$K_eBIC)
+gibbs_label_BIC=c(gibbs_label_BIC,as.numeric(temp_gibbs$selected_res_BIC$labels[[1]]))
+gibbs_label_eBIC=c(gibbs_label_eBIC,as.numeric(temp_gibbs$selected_res_eBIC$labels[[1]]))
+demand_cluster_BIC=temp_gibbs$selected_res_BIC$labels[[1]][1]
+demand_cluster_eBIC=temp_gibbs$selected_res_eBIC$labels[[1]][1]
+demand_fd_BIC=temp_gibbs$selected_res_BIC$beta_fd[[1]][[demand_cluster_BIC]][p]
+demand_fd_eBIC=temp_gibbs$selected_res_eBIC$beta_fd[[1]][[demand_cluster_eBIC]][p]
+fd_coef_df_BIC=cbind(fd_coef_df_BIC,demand_fd_BIC$coefs)
+fd_coef_df_eBIC=cbind(fd_coef_df_eBIC,demand_fd_eBIC$coefs)
+}
+fd_coef_df_BIC=fd_coef_df_BIC[,-1]
+fd_coef_df_eBIC=fd_coef_df_eBIC[,-1]
+demand_fd_BIC$coefs=fd_coef_df_BIC
+demand_fd_eBIC$coefs=fd_coef_df_eBIC
+
+gibbs_fd_BIC_lad=demand_fd_BIC
+gibbs_k_BIC_lad=K_seq_BIC
+gibbs_fd_eBIC_lad=demand_fd_eBIC
+gibbs_k_eBIC_lad=K_seq_eBIC
+gibbs_label_BIC_lad=gibbs_label_BIC
+gibbs_label_eBIC_lad=gibbs_label_eBIC
+```
+
+## visualization for Beijing
+```{r}
+par(mfrow=c(2,3))
+plot(ls_fd_BIC,xlim=c(0,7500),ylim = c(-0.0003,0.00035),cex.axis=1.2,cex.lab=1.5,cex.main=1.5,main="CFLR-BIC(LS)")
+plot(ls_fd_eBIC,xlim=c(0,7500),ylim = c(-0.0003,0.00035),cex.axis=1.2,cex.lab=1.5,cex.main=1.5,main="CFLR-eBIC(LS)")
+plot(gibbs_fd_eBIC_ls,xlim=c(0,7500),ylim = c(-0.0003,0.00035),cex.axis=1.2,cex.lab=1.5,cex.main=1.5,main="GCFLR-eBIC(LS)")
+
+plot(lad_fd_BIC,xlim=c(0,7500),ylim = c(-0.0003,0.00035),cex.axis=1.2,cex.lab=1.5,cex.main=1.5,main="CFLR-BIC(LAD)")
+plot(lad_fd_eBIC,xlim=c(0,7500),ylim = c(-0.0003,0.00035),cex.axis=1.2,cex.lab=1.5,cex.main=1.5,main="CFLR-eBIC(LAD)")
+plot(gibbs_fd_eBIC_lad,xlim=c(0,7500),ylim = c(-0.0003,0.00035),cex.axis=1.2,cex.lab=1.5,cex.main=1.5,main="GCFLR-eBIC(LAD)")
+```
+
+
+```{r}
+nf=50
+label_gibbs_ls_BIC=matrix(gibbs_label_BIC_ls,ncol = nf)
+label_gibbs_lad_BIC=matrix(gibbs_label_BIC_lad,ncol = nf)
+label_gibbs_ls_eBIC=matrix(gibbs_label_eBIC_ls,ncol = nf)
+label_gibbs_lad_eBIC=matrix(gibbs_label_eBIC_lad,ncol = nf)
+
+label_2021_ls_BIC=matrix(ls_label_BIC,ncol = nf)
+label_2021_lad_BIC=matrix(lad_label_BIC,ncol = nf)
+label_2021_ls_eBIC=matrix(ls_label_eBIC,ncol = nf)
+label_2021_lad_eBIC=matrix(lad_label_eBIC,ncol = nf)
+
+
+lad_k_BIC=factor(lad_k_BIC[1:nf],levels = 1:10)
+ls_k_BIC=factor(ls_k_BIC[1:nf],levels = 1:10)
+lad_k_eBIC=factor(lad_k_eBIC[1:nf],levels = 1:10)
+ls_k_eBIC=factor(ls_k_eBIC[1:nf],levels = 1:10)
+gibbs_ls_k_BIC=factor(gibbs_k_BIC_ls[1:nf],levels = 1:10)
+gibbs_lad_k_BIC=factor(gibbs_k_BIC_lad[1:nf],levels = 1:10)
+gibbs_ls_k_eBIC=factor(gibbs_k_eBIC_ls[1:nf],levels = 1:10)
+gibbs_lad_k_eBIC=factor(gibbs_k_eBIC_lad[1:nf],levels = 1:10)
+
+k_df=rbind(table(ls_k_BIC),table(lad_k_BIC),table(gibbs_ls_k_BIC),table(gibbs_lad_k_BIC),
+           table(ls_k_eBIC),table(lad_k_eBIC),table(gibbs_ls_k_eBIC),table(gibbs_lad_k_eBIC))
+rownames(k_df)=c("LS_BIC","LAD_BIC","Gibbs_LS_BIC","Gibbs_LAD_BIC",
+                 "LS_eBIC","LAD_eBIC","Gibbs_LS_eBIC","Gibbs_LAD_eBIC")
+#####################################################################
+library(igraph)
+ari_seq_ls_BIC=NULL
+ari_seq_lad_BIC=NULL
+ari_seq_gibbs_ls_BIC=NULL
+ari_seq_gibbs_lad_BIC=NULL
+ari_seq_ls_eBIC=NULL
+ari_seq_lad_eBIC=NULL
+ari_seq_gibbs_ls_eBIC=NULL
+ari_seq_gibbs_lad_eBIC=NULL
+M=50
+for (i in 1:M) 
+{
+for (j in (1:M)[-i])
+{
+  ari_seq_gibbs_ls_BIC=c(ari_seq_gibbs_ls_BIC,compare(label_gibbs_ls_BIC[,i],label_gibbs_ls_BIC[,j],method="adjusted.rand"))
+  ari_seq_gibbs_lad_BIC=c(ari_seq_gibbs_lad_BIC,compare(label_gibbs_lad_BIC[,i],label_gibbs_lad_BIC[,j],method="adjusted.rand"))
+  ari_seq_gibbs_ls_eBIC=c(ari_seq_gibbs_ls_eBIC,compare(label_gibbs_ls_eBIC[,i],label_gibbs_ls_eBIC[,j],method="adjusted.rand"))
+  ari_seq_gibbs_lad_eBIC=c(ari_seq_gibbs_lad_eBIC,compare(label_gibbs_lad_eBIC[,i],label_gibbs_lad_eBIC[,j],method="adjusted.rand"))
+  ari_seq_ls_BIC=c(ari_seq_ls_BIC,compare(label_2021_ls_BIC[,i],label_2021_ls_BIC[,j],method="adjusted.rand"))
+  ari_seq_lad_BIC=c(ari_seq_lad_BIC,compare(label_2021_lad_BIC[,i],label_2021_lad_BIC[,j],method="adjusted.rand"))
+  ari_seq_ls_eBIC=c(ari_seq_ls_eBIC,compare(label_2021_ls_eBIC[,i],label_2021_ls_eBIC[,j],method="adjusted.rand"))
+  ari_seq_lad_eBIC=c(ari_seq_lad_eBIC,compare(label_2021_lad_eBIC[,i],label_2021_lad_eBIC[,j],method="adjusted.rand"))
+}  
+}
+
+
+ari_df=data.frame(LS_BIC=ari_seq_ls_BIC,LAD_BIC=ari_seq_lad_BIC,
+                  Gibbs_LS_BIC=ari_seq_gibbs_ls_BIC,Gibbs_LAD_BIC=ari_seq_gibbs_lad_BIC,
+                  LS_eBIC=ari_seq_ls_eBIC,LAD_eBIC=ari_seq_lad_eBIC,
+                  Gibbs_LS_eBIC=ari_seq_gibbs_ls_eBIC,Gibbs_LAD_eBIC=ari_seq_gibbs_lad_eBIC)
+ari_df_BIC=data.frame(LS=ari_seq_ls_BIC,LAD=ari_seq_lad_BIC,
+                  Gibbs_LS=ari_seq_gibbs_ls_BIC,Gibbs_LAD=ari_seq_gibbs_lad_BIC)
+ari_df_eBIC=data.frame(LS=ari_seq_ls_eBIC,LAD=ari_seq_lad_eBIC,
+                  Gibbs_LS=ari_seq_gibbs_ls_eBIC,Gibbs_LAD=ari_seq_gibbs_lad_eBIC)
+boxplot(ari_df_BIC,ylim=c(0,1))
+boxplot(ari_df_eBIC,ylim=c(0,1))
+
+
+
+boxplot(ari_df,ylim=c(0,1))
+#ari_df_needed
+ari_df_needed=data.frame(ari_df$LS_BIC,ari_df$LS_eBIC,ari_df$Gibbs_LS_eBIC,
+                         ari_df$LAD_BIC,ari_df$LAD_eBIC,ari_df$Gibbs_LAD_eBIC)
+ari_df_needed=as.matrix(ari_df_needed)
+library(ggplot2)
+plot_dt_ari=data.frame(type=rep(c("CFLR-BIC(LS)","CFLR-eBIC(LS)","GCFLR-eBIC(LS)",
+                            "CFLR-BIC(LAD)","CFLR-eBIC(LAD)","GCFLR-eBIC(LAD)"),each=2450),ARI=as.numeric(ari_df_needed))
+plot_dt_ari$type=factor(plot_dt_ari$type,levels = rev(c("CFLR-BIC(LS)","CFLR-eBIC(LS)","GCFLR-eBIC(LS)",
+                            "CFLR-BIC(LAD)","CFLR-eBIC(LAD)","GCFLR-eBIC(LAD)")))
+# fig2(a) 
+p2=ggplot(plot_dt_ari,aes(x=type,y=ARI))+geom_boxplot() +
+  labs(title = "Horizontal Boxplot with Custom X-axis Labels", x = "Group", y = "Value") +
+  scale_x_discrete(labels = c("A" = "Group A", "B" = "Group B", "C" = "Group C")) +  # 自定义横轴标签
+  coord_flip() +  # 使箱线图横向显示
+  theme_minimal()+
+   labs(x = NULL, y = "ARI") +  
+  labs(title = NULL)+
+  theme(
+    panel.background = element_blank(),            # 移除底纹
+    panel.border = element_rect(color = "black", fill = NA),  # 设置边框为黑色
+    #panel.grid.major = element_blank(),                # 移除主要网格线
+    #panel.grid.minor = element_blank(),                # 移除次要网格线
+    axis.title.x = element_text(size = 14),        # 调整 x 轴标签字体大小
+    axis.text = element_text(size = 14)            # 调整坐标轴字体大小
+  )
+  
+#画图规模 w500 h250
+plot_dt_ari_fig1=plot_dt_ari[plot_dt_ari$type%in%c("CFLR-BIC(LS)","CFLR-BIC(LAD)"),]
+# fig1(a) 
+p1=ggplot(plot_dt_ari_fig1,aes(x=type,y=ARI))+geom_boxplot() +
+  labs(title = "Horizontal Boxplot with Custom X-axis Labels", x = "Group", y = "Value") +
+  scale_x_discrete(labels = c("A" = "Group A", "B" = "Group B", "C" = "Group C")) +  # 自定义横轴标签
+  coord_flip() +  # 使箱线图横向显示
+  theme_minimal()+
+   labs(x = NULL, y = "ARI") +  
+  labs(title = NULL)+
+  theme(
+    panel.background = element_blank(),            # 移除底纹
+    panel.border = element_rect(color = "black", fill = NA),  # 设置边框为黑色
+    #panel.grid.major = element_blank(),                # 移除主要网格线
+    #panel.grid.minor = element_blank(),                # 移除次要网格线
+    axis.title.x = element_text(size = 14),        # 调整 x 轴标签字体大小
+    axis.text = element_text(size = 13)            # 调整坐标轴字体大小
+  )
+
+```
+
+ 

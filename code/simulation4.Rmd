@@ -1,0 +1,621 @@
+---
+title: "simulation4"
+author: "SpencerWang"
+date: "2024-07-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## preparation
+```{r}
+setwd("C:/Users/Spenc/Desktop/manual_packages/FdaCluReg")
+install.packages("C:/Users/Spenc/Desktop/manual_packages/FdaCluReg_0.0.0.18.tar.gz")
+library(FdaCluReg)
+color_seq=c("red","blue","orange","purple","green","grey","#cd5c5c","#006400",
+            "#FF00FF","#d2691e","#00FFFF","#808000","yellow","black","#FF4000")
+```
+
+## parallel algorithm for example 4
+```{r}
+parallel_simulation4=function(seed_seq,method="ls",type=c(TRUE,TRUE),NN=100)
+{
+library(FdaCluReg)
+set.seed(seed_seq)
+fun_1=function(t){return(sin((pi*t))*(2^0.5))}#basis fun 1
+fun_2=function(t){return(sin((2*pi*t))*(2^0.5))}#basis fun 2
+
+function_list=list(fun_1,fun_2)#function list
+sample_t=seq(0,1,0.01)#sampling time 
+group_scale=c(NN,NN,NN)#group scales
+N=sum(group_scale)#number of samples
+fda_coef_df=cbind(rnorm(N,0,1),rnorm(N,0,2))#basis coef. for X construction
+fda_coef_df_list=list(fda_coef_df)# for multi variables
+error_sd=0.2#standard error of observation error 
+
+# generating X  
+xij_temp=xij_fun(function_list=function_list,fda_coef_df=fda_coef_df,sample_t=sample_t,error_sd = 0.2,seed = seed_seq)
+xij_list=list(xij_temp)
+
+## generating Y
+###parameter setting  
+#
+N=nrow(fda_coef_df)#sample size
+reg_error1=rnorm(N,0,1)*0.5#epsilon-1
+reg_error2=rt(N,3)*0.5#epsilon-2
+reg_error3=(rchisq(N,3)-3)*0.5#epsilon-3
+#
+reg_var1=rep(1,N)#sigma-1
+reg_var2=0.5*(fda_coef_df[,1]+fda_coef_df[,2])#sigma-2
+#
+reg_coef_df=as.matrix(cbind(c(rep(1,NN*2),rep(-1,NN)),c(rep(1,NN),rep(-1,NN*2))))
+reg_coef_df_list=list(reg_coef_df)#for multi variables
+reg_intercept=c(rep(3,NN),rep(-3,NN),rep(0,NN))
+
+##########################
+yi_temp_n_homo=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var1,
+               reg_error = reg_error1,seed = seed_seq,interval = c(0,1))
+yi_temp_t_homo=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var1,
+               reg_error = reg_error2,seed = seed_seq,interval = c(0,1))
+yi_temp_chisq_homo=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var1,
+               reg_error = reg_error3,seed = seed_seq,interval = c(0,1))
+
+
+########################
+yi_temp_n_heter=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var2,
+               reg_error = reg_error1,seed = seed_seq,interval = c(0,1))
+yi_temp_t_heter=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var2,
+               reg_error = reg_error2,seed = seed_seq,interval = c(0,1))
+yi_temp_chisq_heter=yi_fun(function_list = function_list,
+               fda_coef_df_list  = fda_coef_df_list,
+               reg_coef_df_list = reg_coef_df_list,
+               reg_intercept = reg_intercept,
+               reg_var = reg_var2,
+               reg_error = reg_error3,seed = seed_seq,interval = c(0,1))
+
+Y_list=vector("list",6);
+Y_list[[1]]=yi_temp_n_homo;Y_list[[2]]=yi_temp_t_homo;Y_list[[3]]=yi_temp_chisq_homo
+Y_list[[4]]=yi_temp_n_heter;Y_list[[5]]=yi_temp_t_heter;Y_list[[6]]=yi_temp_chisq_heter
+names(Y_list)=c("homo_n","homo_t","homo_chisq","heter_n","heter_t","heter_chisq")
+
+
+library(fda)
+basis_need=fourier_basis=create.fourier.basis(c(0,1),10)# basis function
+#smoothing 
+sample_t=seq(0,1,0.01)#sampling time points
+K_seq=2:4
+true_label=c(rep(1,NN),rep(2,NN),rep(3,NN))
+var_ratio=0.9  
+rounds=110
+burning_period=10
+lambda=1
+ncomp_l=2
+
+simulation2_res=simulation_results_function(X_list =xij_list,
+                             Y=Y_list,
+                             basis=basis_need,
+                             sample_t=sample_t,
+                             var_ratio=var_ratio,
+                             K_max=5,
+                             true_label=true_label,
+                             rounds=rounds,
+                             burning_period=burning_period,
+                             lambda = lambda,
+                             method=method,
+                             ncomp_u=10,ncomp_l=ncomp_l,seed=seed_seq,type = type)
+save(simulation2_res,file = paste("C:/users/spenc/desktop/simulation_results/new/sim4/",method,"/n",NN,"/s4_",NN,method,seed_seq,".RData",sep = ""))
+print(seed_seq)
+}
+
+
+```
+
+
+
+## algorithm implementation
+```{r}
+num_cores=10
+library(parallel)
+cl=makeCluster(num_cores)
+clusterExport(cl,  envir = environment(),varlist =c("color_seq"))
+parLapply(cl,1:50,parallel_simulation4,method="lad",type=c(TRUE,TRUE),NN=50)
+parLapply(cl,c(1:50),parallel_simulation4,method="ls",type=c(TRUE,TRUE),NN=50)
+
+```
+
+## call for simulation results
+```{r}
+library(fda)
+temp_dir_path=c("C:/users/spenc/desktop/simulation_results/new/sim4/ls",
+                "C:/users/spenc/desktop/simulation_results/new/sim4/lad",
+                "C:/users/spenc/desktop/simulation_results/new/sim4/lad_gibbs")
+nn_type=c("n50","n100")
+NN=c(50,100)
+dir_type=c("LS","LAD","LAD_gibbs")
+
+stable_ari=function(label_mat)
+{
+  ari_seq=NULL
+  for (i in 1:(ncol(label_mat)-1))
+    {for (j in (i+1):ncol(label_mat))
+    {ari_seq=igraph::compare(label_mat[,i],label_mat[,j],method="adjusted.rand")}}
+  return(ari_seq)
+  }
+
+for (nn in 1:length(nn_type))
+{
+NN_temp=NN[nn]
+
+for (tt in c(1,2,4)) 
+{
+dir_path=paste(temp_dir_path[tt],"/",nn_type[nn],sep = "")
+temp_dir=dir(dir_path)
+file_num=length(temp_dir)
+fun_1=function(t){return(sin((pi*t))*(2^0.5))}#basis fun 1
+fun_2=function(t){return(sin((2*pi*t))*(2^0.5))}#basis fun 2
+
+real_beta_function1_1=function(x){return(fun_1(x)+fun_2(x))}
+real_beta_function1_2=function(x){return(fun_1(x)-fun_2(x))}
+real_beta_function1_3=function(x){return(-fun_1(x)-fun_2(x))}
+beta_function_list=c(list(real_beta_function1_1),list(real_beta_function1_2),list(real_beta_function1_3))
+
+real_label=c(rep(1,100),rep(2,100),rep(3,100))
+
+empty_assessment_BIC=matrix(rep(0,12*3),ncol = 3)
+empty_assessment_eBIC=matrix(rep(0,12*3),ncol = 3)
+empty_k_BIC=rep(0,12)
+empty_k_eBIC=rep(0,12)
+empty_mse_BIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+empty_mse_eBIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+#######################stability indicated by ARI
+empty_label_record_BIC=vector("list",2)
+empty_label_record_eBIC=vector("list",2)
+
+for (i in 1:length(temp_dir))
+{
+  load(paste(dir_path,temp_dir[i],sep = "/"))
+  temp_res=simulation2_res
+  
+  empty_assessment_BIC=matrix(as.numeric(temp_res$assement_all_mat_BIC),ncol = 3)+empty_assessment_BIC
+  empty_k_BIC=empty_k_BIC+temp_res$selected_K_2021_BIC
+  empty_assessment_eBIC=matrix(as.numeric(temp_res$assement_all_mat_eBIC),ncol = 3)+empty_assessment_eBIC
+  empty_k_eBIC=empty_k_eBIC+temp_res$selected_K_2021_eBIC
+
+ 
+  #j=1  gibbs; j=2  2021
+  j_seq=1:2
+  if(tt%in%c(2:3)){j_seq=c(2)}
+  for (j in j_seq) 
+  {
+  empty_error_temp_file_BIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+  empty_error_temp_file_eBIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+    for (l in 1:6) 
+    {
+      temp_label_BIC=as.numeric(temp_res[[j]][[l]]$selected_res_BIC$labels[[1]])
+      temp_label_eBIC=as.numeric(temp_res[[j]][[l]]$selected_res_eBIC$labels[[1]])
+       ###stability indicated by ARI
+      empty_label_record_BIC[[j]]=c(empty_label_record_BIC[[j]],temp_label_BIC)
+      empty_label_record_eBIC[[j]]=c(empty_label_record_eBIC[[j]],temp_label_eBIC)
+      N=length(temp_label_BIC)
+      temp_fd_list_BIC=temp_res[[j]][[l]]$selected_res_BIC$beta_fd[[1]]
+      temp_fd_list_eBIC=temp_res[[j]][[l]]$selected_res_eBIC$beta_fd[[1]]
+      temp_k_selected_BIC=temp_res$selected_K_2021_BIC[(j-1)*6+l]
+      temp_k_selected_eBIC=temp_res$selected_K_2021_eBIC[(j-1)*6+l]
+      temp_se_seq_BIC=NULL
+      temp_se_seq_eBIC=NULL
+
+      for (sample_index in 1:N) 
+      {
+        beta_fun_BIC=function(x){return(eval.fd(x,temp_fd_list_BIC[[temp_label_BIC[sample_index]]]))}
+        beta_fun_eBIC=function(x){return(eval.fd(x,temp_fd_list_eBIC[[temp_label_eBIC[sample_index]]]))}
+        temp_real_beta=beta_function_list[[real_label[sample_index]]]
+        temp_se_BIC=integrate(function(x){return((beta_fun_BIC(x)-temp_real_beta(x))^2)},0,1)$value
+        temp_se_eBIC=integrate(function(x){return((beta_fun_eBIC(x)-temp_real_beta(x))^2)},0,1)$value
+        temp_se_seq_BIC=c(temp_se_seq_BIC,temp_se_BIC)
+        temp_se_seq_eBIC=c(temp_se_seq_eBIC,temp_se_eBIC)
+      }
+      empty_error_temp_file_BIC[l,]=temp_se_seq_BIC
+      empty_error_temp_file_eBIC[l,]=temp_se_seq_eBIC
+    }
+     temp_mse_BIC=apply(empty_error_temp_file_BIC,1,mean)
+     temp_mse_eBIC=apply(empty_error_temp_file_eBIC,1,mean)
+     empty_mse_BIC[[j]]=empty_mse_BIC[[j]]+temp_mse_BIC
+     empty_mse_eBIC[[j]]=empty_mse_eBIC[[j]]+temp_mse_eBIC
+  }
+}
+  rownames(empty_assessment_BIC)=paste(rownames(temp_res$assement_all_mat_BIC),"BIC",sep = "_")
+  rownames(empty_assessment_eBIC)=paste(rownames(temp_res$assement_all_mat_eBIC),"BIC",sep = "_")
+  colnames(empty_assessment_BIC)=paste(colnames(temp_res$assement_all_mat_BIC),"BIC",sep = "_")
+  colnames(empty_assessment_eBIC)=paste(colnames(temp_res$assement_all_mat_eBIC),"BIC",sep = "_")
+###########stability indicated by ARI
+stable_ari_BIC=rep(0,12)
+stable_ari_eBIC=rep(0,12)
+for (j in j_seq) 
+{
+  temp_reocrd_BIC=empty_label_record_BIC[[j]];record_mat1_BIC=matrix(temp_reocrd_BIC,ncol = file_num)
+  temp_reocrd_eBIC=empty_label_record_eBIC[[j]];record_mat1_eBIC=matrix(temp_reocrd_eBIC,ncol = file_num)
+  for (l in 1:6)
+  {
+    temp_index=(l-1)*N+(1:N);
+    temp_record_mat_BIC=record_mat1_BIC[temp_index,]
+    temp_record_mat_eBIC=record_mat1_eBIC[temp_index,]
+    temp_ari_seq_BIC=stable_ari(temp_record_mat_BIC);mean_ari_BIC=mean(temp_ari_seq_BIC)
+    temp_ari_seq_eBIC=stable_ari(temp_record_mat_eBIC);mean_ari_eBIC=mean(temp_ari_seq_eBIC)
+    stable_ari_BIC[(j-1)*6+l]=mean_ari_BIC
+    stable_ari_eBIC[(j-1)*6+l]=mean_ari_eBIC
+  }}
+  
+
+res_k_BIC=empty_k_BIC/length(temp_dir)
+res_k_eBIC=empty_k_eBIC/length(temp_dir)
+res_assement_BIC=empty_assessment_BIC/length(temp_dir)
+res_assement_eBIC=empty_assessment_eBIC/length(temp_dir)
+res_mse_gibbs_BIC=empty_mse_BIC[[1]]/length(temp_dir)
+res_mse_gibbs_eBIC=empty_mse_eBIC[[1]]/length(temp_dir)
+res_mse_2021_BIC=empty_mse_BIC[[2]]/length(temp_dir)
+res_mse_2021_eBIC=empty_mse_eBIC[[2]]/length(temp_dir)
+
+res_assement_reorder=rbind(res_assement_BIC[(1:6)*2-1,],res_assement_BIC[(1:6)*2,],
+                           res_assement_eBIC[(1:6)*2-1,],res_assement_eBIC[(1:6)*2,])
+res_all_df=data.frame(cbind(res_assement_reorder,k=c(res_k_BIC,res_k_eBIC),mse=c(res_mse_gibbs_BIC,res_mse_2021_BIC,res_mse_gibbs_eBIC,res_mse_2021_eBIC),stable_ari=c(stable_ari_BIC,stable_ari_eBIC)))
+rownames(res_all_df)=paste(c("homo-n-gibbs","homo-t-gibbs","homo-chisq-gibbs",
+                       "heter-n-gibbs","heter-t-gibbs","heter-chisq-gibbs",
+                       "homo-n-2021","homo-t-2021","homo-chisq-2021",
+                       "heter-n-2021","heter-t-2021","heter-chisq-2021"),rep(c("BIC","eBIC"),each=12),sep = "-")
+res_all_df=data.frame(matrix(unlist(strsplit(rownames(res_all_df),"-")),byrow = T,nrow = nrow(res_all_df)),res_all_df)
+colnames(res_all_df)=c("heter_homo","error","method","IC","ARI","RI","NMI","K","MSE","ARI_stable")
+
+write.csv(res_all_df,paste("C:/users/spenc/desktop/simulation_results/new/sample4_",dir_type[tt],nn_type[[nn]],".csv",sep=""))
+  
+}
+}
+```
+
+## visualization of example 4
+```{r}
+library(fda)
+temp_dir_path=c("C:/users/spenc/desktop/simulation_results/new/sim4/ls",
+                "C:/users/spenc/desktop/simulation_results/new/sim4/lad",
+                "C:/users/spenc/desktop/simulation_results/new/sim4/lad_gibbs")
+nn_type=c("n50","n100")
+NN=c(50,100)
+dir_type=c("LS","LAD","LAD_gibbs")
+
+stable_ari=function(label_mat)
+{
+  ari_seq=NULL
+  for (i in 1:(ncol(label_mat)-1))
+    {for (j in (i+1):ncol(label_mat))
+    {ari_seq=igraph::compare(label_mat[,i],label_mat[,j],method="adjusted.rand")}}
+  return(ari_seq)
+  }
+
+for (nn in 1:length(nn_type))
+{
+NN_temp=NN[nn]
+
+for (tt in c(1,4)) 
+{
+dir_path=paste(temp_dir_path[tt],"/",nn_type[nn],sep = "")
+temp_dir=dir(dir_path)
+file_num=length(temp_dir)
+fun_1=function(t){return(sin((pi*t))*(2^0.5))}#basis fun 1
+fun_2=function(t){return(sin((2*pi*t))*(2^0.5))}#basis fun 2
+
+real_beta_function1_1=function(x){return(fun_1(x)+fun_2(x))}
+real_beta_function1_2=function(x){return(fun_1(x)-fun_2(x))}
+real_beta_function1_3=function(x){return(-fun_1(x)-fun_2(x))}
+beta_function_list=c(list(real_beta_function1_1),list(real_beta_function1_2),list(real_beta_function1_3))
+
+real_label=c(rep(1,100),rep(2,100),rep(3,100))
+
+empty_assessment_BIC=matrix(rep(0,12*3),ncol = 3)
+empty_assessment_eBIC=matrix(rep(0,12*3),ncol = 3)
+empty_k_BIC=rep(0,12)
+empty_k_eBIC=rep(0,12)
+empty_mse_BIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+empty_mse_eBIC=c(list(rep(0,6)),list(rep(0,6)))#mse
+empty_mse_BIC_seq=vector("list",2)
+empty_mse_eBIC_seq=vector("list",2)#mse_seq
+empty_ari_BIC_seq=NULL
+empty_ari_eBIC_seq=NULL#mse_seq
+#######################stability indicated by ARI
+empty_label_record_BIC=vector("list",2)
+empty_label_record_eBIC=vector("list",2)
+
+for (i in 1:length(temp_dir))
+{
+  load(paste(dir_path,temp_dir[i],sep = "/"))
+  temp_res=simulation2_res
+  
+  empty_assessment_BIC=matrix(as.numeric(temp_res$assement_all_mat_BIC),ncol = 3)+empty_assessment_BIC
+  empty_k_BIC=empty_k_BIC+temp_res$selected_K_2021_BIC
+  empty_assessment_eBIC=matrix(as.numeric(temp_res$assement_all_mat_eBIC),ncol = 3)+empty_assessment_eBIC
+  empty_k_eBIC=empty_k_eBIC+temp_res$selected_K_2021_eBIC
+  empty_ari_BIC_seq=c(empty_ari_BIC_seq,as.numeric(temp_res$assement_all_mat_BIC[,1]))
+  empty_ari_eBIC_seq=c(empty_ari_eBIC_seq,as.numeric(temp_res$assement_all_mat_eBIC[,1]))
+  #j=1  gibbs; j=2  2021
+  j_seq=1:2
+  if(tt%in%c(2:3)){j_seq=c(2)}
+  for (j in j_seq) 
+  {
+  empty_error_temp_file_BIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+  empty_error_temp_file_eBIC=matrix(rep(0,6*length(real_label)),nrow = 6)#空的mse 当前文件
+    for (l in 1:6) 
+    {
+      temp_label_BIC=as.numeric(temp_res[[j]][[l]]$selected_res_BIC$labels[[1]])
+      temp_label_eBIC=as.numeric(temp_res[[j]][[l]]$selected_res_eBIC$labels[[1]])
+       ###稳定性
+      empty_label_record_BIC[[j]]=c(empty_label_record_BIC[[j]],temp_label_BIC)
+      empty_label_record_eBIC[[j]]=c(empty_label_record_eBIC[[j]],temp_label_eBIC)
+      N=length(temp_label_BIC)
+      temp_fd_list_BIC=temp_res[[j]][[l]]$selected_res_BIC$beta_fd[[1]]
+      temp_fd_list_eBIC=temp_res[[j]][[l]]$selected_res_eBIC$beta_fd[[1]]
+      temp_k_selected_BIC=temp_res$selected_K_2021_BIC[(j-1)*6+l]
+      temp_k_selected_eBIC=temp_res$selected_K_2021_eBIC[(j-1)*6+l]
+      temp_se_seq_BIC=NULL
+      temp_se_seq_eBIC=NULL
+
+      for (sample_index in 1:N) 
+      {
+        beta_fun_BIC=function(x){return(eval.fd(x,temp_fd_list_BIC[[temp_label_BIC[sample_index]]]))}
+        beta_fun_eBIC=function(x){return(eval.fd(x,temp_fd_list_eBIC[[temp_label_eBIC[sample_index]]]))}
+        temp_real_beta=beta_function_list[[real_label[sample_index]]]
+        temp_se_BIC=integrate(function(x){return((beta_fun_BIC(x)-temp_real_beta(x))^2)},0,1)$value
+        temp_se_eBIC=integrate(function(x){return((beta_fun_eBIC(x)-temp_real_beta(x))^2)},0,1)$value
+        temp_se_seq_BIC=c(temp_se_seq_BIC,temp_se_BIC)
+        temp_se_seq_eBIC=c(temp_se_seq_eBIC,temp_se_eBIC)
+      }
+      empty_error_temp_file_BIC[l,]=temp_se_seq_BIC
+      empty_error_temp_file_eBIC[l,]=temp_se_seq_eBIC
+    }
+     temp_mse_BIC=apply(empty_error_temp_file_BIC,1,mean)
+     temp_mse_eBIC=apply(empty_error_temp_file_eBIC,1,mean)
+     #mse_seq
+     empty_mse_BIC_seq[[j]]=c(empty_mse_BIC_seq[[j]],temp_mse_BIC)
+     empty_mse_eBIC_seq[[j]]=c(empty_mse_eBIC_seq[[j]],temp_mse_eBIC)
+     
+     empty_mse_BIC[[j]]=empty_mse_BIC[[j]]+temp_mse_BIC
+     empty_mse_eBIC[[j]]=empty_mse_eBIC[[j]]+temp_mse_eBIC
+  }
+}
+  rownames(empty_assessment_BIC)=paste(rownames(temp_res$assement_all_mat_BIC),"BIC",sep = "_")
+  rownames(empty_assessment_eBIC)=paste(rownames(temp_res$assement_all_mat_eBIC),"BIC",sep = "_")
+  colnames(empty_assessment_BIC)=paste(colnames(temp_res$assement_all_mat_BIC),"BIC",sep = "_")
+  colnames(empty_assessment_eBIC)=paste(colnames(temp_res$assement_all_mat_eBIC),"BIC",sep = "_")
+###########稳定性
+stable_ari_BIC=rep(0,12)
+stable_ari_eBIC=rep(0,12)
+for (j in j_seq) 
+{
+  temp_reocrd_BIC=empty_label_record_BIC[[j]];record_mat1_BIC=matrix(temp_reocrd_BIC,ncol = file_num)
+  temp_reocrd_eBIC=empty_label_record_eBIC[[j]];record_mat1_eBIC=matrix(temp_reocrd_eBIC,ncol = file_num)
+  for (l in 1:6)
+  {
+    temp_index=(l-1)*N+(1:N);
+    temp_record_mat_BIC=record_mat1_BIC[temp_index,]
+    temp_record_mat_eBIC=record_mat1_eBIC[temp_index,]
+    temp_ari_seq_BIC=stable_ari(temp_record_mat_BIC);mean_ari_BIC=mean(temp_ari_seq_BIC)
+    temp_ari_seq_eBIC=stable_ari(temp_record_mat_eBIC);mean_ari_eBIC=mean(temp_ari_seq_eBIC)
+    stable_ari_BIC[(j-1)*6+l]=mean_ari_BIC
+    stable_ari_eBIC[(j-1)*6+l]=mean_ari_eBIC
+  }}
+  
+
+res_k_BIC=empty_k_BIC/length(temp_dir)
+res_k_eBIC=empty_k_eBIC/length(temp_dir)
+res_assement_BIC=empty_assessment_BIC/length(temp_dir)
+res_assement_eBIC=empty_assessment_eBIC/length(temp_dir)
+res_mse_gibbs_BIC=empty_mse_BIC[[1]]/length(temp_dir)
+res_mse_gibbs_eBIC=empty_mse_eBIC[[1]]/length(temp_dir)
+res_mse_2021_BIC=empty_mse_BIC[[2]]/length(temp_dir)
+res_mse_2021_eBIC=empty_mse_eBIC[[2]]/length(temp_dir)
+
+res_assement_reorder=rbind(res_assement_BIC[(1:6)*2-1,],res_assement_BIC[(1:6)*2,],
+                           res_assement_eBIC[(1:6)*2-1,],res_assement_eBIC[(1:6)*2,])
+res_all_df=data.frame(cbind(res_assement_reorder,k=c(res_k_BIC,res_k_eBIC),mse=c(res_mse_gibbs_BIC,res_mse_2021_BIC,res_mse_gibbs_eBIC,res_mse_2021_eBIC),stable_ari=c(stable_ari_BIC,stable_ari_eBIC)))
+rownames(res_all_df)=paste(c("homo-n-gibbs","homo-t-gibbs","homo-chisq-gibbs",
+                       "heter-n-gibbs","heter-t-gibbs","heter-chisq-gibbs",
+                       "homo-n-2021","homo-t-2021","homo-chisq-2021",
+                       "heter-n-2021","heter-t-2021","heter-chisq-2021"),rep(c("BIC","eBIC"),each=12),sep = "-")
+res_all_df=data.frame(matrix(unlist(strsplit(rownames(res_all_df),"-")),byrow = T,nrow = nrow(res_all_df)),res_all_df)
+colnames(res_all_df)=c("heter_homo","error","method","IC","ARI","RI","NMI","K","MSE","ARI_stable")
+
+write.csv(res_all_df,paste("C:/users/spenc/desktop/simulation_results/new/sample4_",dir_type[tt],nn_type[[nn]],".csv",sep=""))
+
+#mse_seq
+#BIC
+BIC_mse_seq=rbind(matrix(empty_mse_BIC_seq[[1]],nrow = 6),matrix(empty_mse_BIC_seq[[1]],nrow = 6))
+rownames(BIC_mse_seq)=paste(c("homo-n-gibbs","homo-t-gibbs","homo-chisq-gibbs",
+                       "heter-n-gibbs","heter-t-gibbs","heter-chisq-gibbs",
+                       "homo-n-2021","homo-t-2021","homo-chisq-2021",
+                       "heter-n-2021","heter-t-2021","heter-chisq-2021"),rep(dir_type[tt],12),
+                       rep("BIC",12),rep(nn_type[[nn]],12),rep("mse",12),sep = "-")
+BIC_ari_seq=matrix(empty_ari_BIC_seq,nrow = 12)
+rownames(BIC_ari_seq)=paste(c("homo-n-gibbs","homo-n-2021","homo-t-gibbs","homo-t-2021","homo-chisq-gibbs","homo-chisq-2021",
+                       "heter-n-gibbs","heter-n-2021","heter-t-gibbs","heter-t-2021","heter-chisq-gibbs","heter-chisq-2021"),
+                       rep(dir_type[tt],12),rep("BIC",12),rep(nn_type[[nn]],12),rep("ari",12),sep = "-")
+#eBIC
+eBIC_mse_seq=rbind(matrix(empty_mse_eBIC_seq[[1]],nrow = 6),matrix(empty_mse_eBIC_seq[[1]],nrow = 6))
+rownames(eBIC_mse_seq)=paste(c("homo-n-gibbs","homo-t-gibbs","homo-chisq-gibbs",
+                       "heter-n-gibbs","heter-t-gibbs","heter-chisq-gibbs",
+                       "homo-n-2021","homo-t-2021","homo-chisq-2021",
+                       "heter-n-2021","heter-t-2021","heter-chisq-2021"),rep(dir_type[tt],12),
+                       rep("eBIC",12),rep(nn_type[[nn]],12),rep("mse",12),sep = "-")
+eBIC_ari_seq=matrix(empty_ari_eBIC_seq,nrow = 12)
+rownames(eBIC_ari_seq)=paste(c("homo-n-gibbs","homo-n-2021","homo-t-gibbs","homo-t-2021","homo-chisq-gibbs","homo-chisq-2021",
+                       "heter-n-gibbs","heter-n-2021","heter-t-gibbs","heter-t-2021","heter-chisq-gibbs","heter-chisq-2021"),
+                       rep(dir_type[tt],12),rep("eBIC",12),rep(nn_type[[nn]],12),rep("ari",12),sep = "-")
+write.csv(BIC_ari_seq,paste("C:/users/spenc/desktop/simulation_results/new/s4_ari_BIC_",dir_type[tt],nn_type[[nn]],".csv",sep=""))
+write.csv(eBIC_ari_seq,paste("C:/users/spenc/desktop/simulation_results/new/s4_ari_eBIC_",dir_type[tt],nn_type[[nn]],".csv",sep=""))
+write.csv(BIC_mse_seq,paste("C:/users/spenc/desktop/simulation_results/new/s4_mse_BIC_",dir_type[tt],nn_type[[nn]],".csv",sep=""))
+write.csv(eBIC_mse_seq,paste("C:/users/spenc/desktop/simulation_results/new/s4_mse_eBIC_",dir_type[tt],nn_type[[nn]],".csv",sep=""))
+}
+}
+```
+visualization data preparation
+```{r}
+plot_dir="C:/users/spenc/desktop/simulation_results/new/sim4_plot"
+file_list=paste(plot_dir,dir(plot_dir),sep = "/")
+ori_file=read.csv(file_list[1])
+for (i in 2:length(file_list)) 
+{
+temp_file=read.csv(file_list[i])
+ori_file=rbind(ori_file,read.csv(file_list[i]))  
+}
+split_index=matrix(unlist(strsplit(ori_file$X,"-")),byrow =T,ncol=7)
+indexed_dt=cbind(split_index,ori_file[,-1])
+write.csv(indexed_dt,"C:/users/spenc/desktop/simulation_results/new/sim4_plot/indexed_dt.csv")
+```
+visualization 
+```{r}
+library(ggplot2)
+library(patchwork)
+plot_dt_all=read.csv("C:/users/spenc/desktop/simulation_results/new/sim4_plot/indexed_dt_reorder.csv")
+main_seq=paste(rep(c("homo-chisq","homo-n","homo-t","heter-chisq","heter-n","heter-t"),2),rep(c("LAD","LS"),each=6),sep = "-")
+col_per_plot=c(rep("#FF9933",3),rep("#9933FF",3))
+xlab_per_plot=c("A1S","A2S","B2S","A1L","A2L","B2L")
+#画图参数
+plot_parameter=c(13,11,0.5)
+
+main_seq_reorder=main_seq[c(8,2,11,5,9,12,3,6,7,10,1,4)]
+#MSE
+mse_dt=plot_dt_all[73:144,8:57]
+temp_plot_dt=mse_dt
+plot_list=vector("list",12)
+ylim_seq=rep(c(6,4,6,6,4,4),2)
+for (i in c(7:12,1:6))
+{
+  temp_dt=apply(temp_plot_dt[(1:6)+(i-1)*6,],2,as.numeric)
+  plot_dt=data.frame(type=rep(xlab_per_plot,50),value=as.numeric(temp_dt),cluster=rep(col_per_plot,50))
+  plot_dt$type=factor(plot_dt$type,levels = c("A1S","A2S","B2S","A1L","A2L","B2L"))
+  temp_p=ggplot(data=plot_dt,mapping = aes(x=type,y=value),fill=col)+
+    geom_boxplot(fatten=1.5)+
+    scale_fill_manual(values = c(rep("#FF9933",3),rep("#9933FF",3)))+
+  labs(x="",y="MSE")+
+  theme(panel.background = element_rect(fill = "white", color = "black"),panel.grid.major  = element_line(color ="grey",linetype = "dotted"))+
+    scale_y_continuous(limits = c(0, ylim_seq[i]))+
+    theme(axis.text=element_text(size=9))+
+    ggtitle(main_seq[i])
+  temp_p=temp_p+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+plot_list[[i]]=temp_p
+}
+mse_p=wrap_plots(plot_list, ncol = 6)
+
+#ari
+ari_dt=plot_dt_all[1:72,8:57]
+temp_plot_dt=ari_dt
+plot_list=vector("list",12)
+for (i in c(7:12,1:6))
+{
+  temp_dt=apply(temp_plot_dt[(1:6)+(i-1)*6,],2,as.numeric)
+  plot_dt=data.frame(type=rep(xlab_per_plot,50),value=as.numeric(temp_dt),cluster=rep(col_per_plot,50))
+  plot_dt$type=factor(plot_dt$type,levels = c("A1S","A2S","B2S","A1L","A2L","B2L"))
+  temp_p=ggplot(data=plot_dt,mapping = aes(x=type,y=value),fill=cluster)+
+    geom_boxplot(fatten=1.5)+
+    scale_fill_manual(values = c(rep("#FF9933",3),rep("#9933FF",3)))+
+  labs(x="",y="ARI")+
+  theme(panel.background = element_rect(fill = "white", color = "black"),panel.grid.major  = element_line(color ="grey",linetype = "dotted"))+
+    scale_y_continuous(limits = c(0, 0.9))+
+     theme(axis.text=element_text(size=9))+
+    ggtitle(main_seq[i])
+  temp_p=temp_p+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+plot_list[[i]]=temp_p
+}
+ari_p=wrap_plots(plot_list, ncol = 4)
+
+#画图规模 w1600 h700
+```
+
+
+```{r}
+library(ggplot2)
+library(patchwork)
+plot_dt_all=read.csv("C:/users/spenc/desktop/simulation_results/new/sim4_plot/indexed_dt_reorder.csv")
+main_seq=paste(rep(c("homo-chisq","homo-n","homo-t","heter-chisq","heter-n","heter-t"),2),rep(c("LAD","LS"),each=6),sep = "-")
+col_per_plot=c(rep("#FF9933",3),rep("#9933FF",3))
+xlab_per_plot=c("A1S","A2S","B2S","A1L","A2L","B2L")
+#画图参数
+plot_parameter=c(13,11,0.5)
+
+#main_seq_reorder=main_seq[c(8,2,11,5,9,3,12,6,7,1,10,4)]
+#MSE
+mse_dt=plot_dt_all[73:144,8:57]
+temp_plot_dt=mse_dt
+plot_list=vector("list",12)
+ylim_seq=rep(c(6,4,6,6,4,4),2)
+for (i in c(7:12,1:6))
+{
+  temp_dt=apply(temp_plot_dt[(1:6)+(i-1)*6,],2,as.numeric)
+  plot_dt=data.frame(type=rep(xlab_per_plot,50),value=as.numeric(temp_dt),cluster=rep(col_per_plot,50))
+  plot_dt$type=factor(plot_dt$type,levels = c("A1S","A2S","B2S","A1L","A2L","B2L"))
+  temp_p=ggplot(data=plot_dt,mapping = aes(x=type,y=value),fill=col)+
+    geom_boxplot(fatten=1.5)+
+    scale_fill_manual(values = c(rep("#FF9933",3),rep("#9933FF",3)))+
+  labs(x="",y="MSE")+
+  theme(panel.background = element_rect(fill = "white", color = "black"),panel.grid.major  = element_line(color ="grey",linetype = "dotted"))+
+    scale_y_continuous(limits = c(0, ylim_seq[i]))+
+    theme(axis.text=element_text(size=9))+
+    ggtitle(main_seq[i])
+  temp_p=temp_p+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+plot_list[[i]]=temp_p
+}
+plot_list_reorder=plot_list[c(8,2,11,5,9,3,12,6,7,1,10,4)]
+mse_p=wrap_plots(plot_list_reorder, ncol = 4)
+
+#ari
+ari_dt=plot_dt_all[1:72,8:57]
+temp_plot_dt=ari_dt
+plot_list=vector("list",12)
+for (i in c(7:12,1:6))
+{
+  temp_dt=apply(temp_plot_dt[(1:6)+(i-1)*6,],2,as.numeric)
+  plot_dt=data.frame(type=rep(xlab_per_plot,50),value=as.numeric(temp_dt),cluster=rep(col_per_plot,50))
+  plot_dt$type=factor(plot_dt$type,levels = c("A1S","A2S","B2S","A1L","A2L","B2L"))
+  temp_p=ggplot(data=plot_dt,mapping = aes(x=type,y=value),fill=cluster)+
+    geom_boxplot(fatten=1.5)+
+    scale_fill_manual(values = c(rep("#FF9933",3),rep("#9933FF",3)))+
+  labs(x="",y="ARI")+
+  theme(panel.background = element_rect(fill = "white", color = "black"),panel.grid.major  = element_line(color ="grey",linetype = "dotted"))+
+    scale_y_continuous(limits = c(0, 0.9))+
+     theme(axis.text=element_text(size=9))+
+    ggtitle(main_seq[i])
+  temp_p=temp_p+theme(axis.title.x =element_text(size = plot_parameter[1]),axis.title.y =element_text(size = plot_parameter[1]),
+         axis.text.x = element_text(size = plot_parameter[2]),axis.text.y = element_text(size = plot_parameter[2]),
+         axis.line = element_line(linewidth  = plot_parameter[3]))
+plot_list[[i]]=temp_p
+}
+plot_list_reorder=plot_list[c(8,2,11,5,9,3,12,6,7,1,10,4)]
+ari_p=wrap_plots(plot_list_reorder, ncol = 4)
+
+#画图规模 w1000 h1000
+```
+

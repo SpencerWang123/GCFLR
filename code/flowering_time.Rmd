@@ -1,0 +1,1428 @@
+---
+title: "flower_time"
+author: "SpencerWang"
+date: "2025-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# preparation  
+```{r}
+mac_dir="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt"
+library(entropy)
+library(fda)
+library(FdaCluReg)
+snp=read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp.csv",encoding = "UTF-8")
+env_x=read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/env.csv",encoding = "UTF-8")
+env_y=read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/env_y.csv",encoding = "UTF-8")
+
+ari_fun=function(x)
+{
+  library(igraph)
+  ari_seq=NULL
+  n=ncol(x)
+  for (i in 2:n) 
+  {
+    for (j in 1:(i-1))
+      {
+      ari_seq=c(ari_seq,compare(x[,i],x[,j],method="adjusted.rand"))
+    }
+  }
+  return(ari_seq)
+}
+
+
+
+```
+
+generate PT(t),GDD(t) and DL(t)  
+```{r}
+PT=env_x$GDD*env_x$DL
+PT_mat=matrix(PT, nrow = 122)
+GDD_mat=matrix(env_x$GDD, nrow = 122)
+DL_mat=matrix(env_x$DL, nrow = 122)
+```
+## Prediction based on PT  
+###  data preparation     
+1. centralization of X(t)  
+2. standardize Y   
+```{r}
+#均值函数 NA的删除
+FT_dap_mat=matrix(as.numeric(env_y$FTdap),nrow=474)
+FT_dap_mat=(FT_dap_mat[1:237,]+FT_dap_mat[237+1:237,])/2
+#种植日期计算的flower time
+FT_gdd_mat=matrix(as.numeric(env_y$FTgdd),nrow=474)#GDD计算的flower time
+FT_gdd_mat=(FT_gdd_mat[1:237,]+FT_gdd_mat[237+1:237,])/2
+FT_RIL_mat=matrix(env_y$RIL_ID,nrow=474)[,1]#种类
+env_code=env_y$Env_code[!duplicated(env_y$Env_code)]
+colnames(FT_dap_mat)=env_code;colnames(FT_gdd_mat)=env_code
+
+xij_mat=PT_mat[,rep(1:9,each=237)][1:121,]
+#xij中心化
+xij_mean=apply(xij_mat,1,mean)
+xij_mat=xij_mat-xij_mean
+yij_ori1=as.numeric(FT_gdd_mat)
+yij_ori2=as.numeric(FT_dap_mat)
+#NA清理 采样 并且对Y进行标准化处理
+yij1=scale(yij_ori1[!is.na(yij_ori1)])
+yij2=scale(yij_ori2[!is.na(yij_ori2)])
+xij_list=list(xij_mat[,!is.na(yij_ori1)])
+
+sample_index=1:length(yij1)#sample(length(yij),1000)
+yij_test1=yij1[sample_index]
+yij_test2=yij2[sample_index]
+xij_test=list(xij_mat[,!is.na(yij_ori1)][,sample_index])
+
+
+#平滑测试
+basis_need=create.bspline.basis(rangeval = seq(1,121,3))
+smoothed_x=smooth.basis(1:121,xij_list[[1]],basis_need)
+
+```
+visualization of X(t)       
+```{r}
+plot(smoothed_x$fd[sample(length(yij_test1),1000)],ylab="PT")
+#5*5
+```
+
+### algorithm implementation using LAD loss   
+    
+```{r eval=FALSE}
+test_reg_PT_GDD=gibbs_clusterwise_regression_auto(xij_test,yij_test1,basis_need,sample_t = 1:121,
+                                  K_max =6,
+                                  rounds = 110,burning_period = 10,lambda = 1,
+                                  true_label = rep(1,length(yij_test1)),var_ratio = 0.9,method = "lad")
+
+test_reg_PT_DAP=gibbs_clusterwise_regression_auto(xij_test,yij_test2,basis_need,sample_t = 1:121,
+                                  K_max =6,
+                                  rounds = 110,burning_period = 10,lambda = 1,
+                                  true_label = rep(1,length(yij_test2)),var_ratio = 0.9,method = "lad")
+
+save(test_reg_PT_GDD,file = "~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_PT_GDD_lad.RData")
+save(test_reg_PT_DAP,file = "~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_PT_DAP_lad.RData")
+```
+
+### visualization     
+#### visualization of coefficients      
+揭示不同品系的高粱开花时间收到PT影响的差异性，对此处差异性进行解读，最好是解读为容易说明的性状  
+```{r}
+load("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_PT_GDD_lad.RData")
+load("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_PT_DAP_lad.RData")
+#画图
+par(mfrow=c(1,1))
+fd_coef_GDD=t(test_reg_PT_GDD$selected_res_eBIC$coefficients[[1]][-1,])%*%t(test_reg_PT_GDD$selected_res_eBIC$fpca[[1]]$harmonics$coefs[,1:5])
+test_coef_fd_GDD=fd(t(fd_coef_GDD),test_reg_PT_GDD$selected_res_eBIC$fpca[[1]]$harmonics$basis)
+plot(test_coef_fd_GDD,main=paste("FT-GDD~PT(t) K=",test_reg_PT_GDD$K_eBIC,sep = ""))
+#6*3
+fd_coef_DAP=t(test_reg_PT_DAP$selected_res_eBIC$coefficients[[1]][-1,])%*%t(test_reg_PT_DAP$selected_res_eBIC$fpca[[1]]$harmonics$coefs[,1:5])
+test_coef_fd_DAP=fd(t(fd_coef_DAP),test_reg_PT_DAP$selected_res_eBIC$fpca[[1]]$harmonics$basis)
+plot(test_coef_fd_DAP,main=paste("FT-DAP~PT(t) K=",test_reg_PT_DAP$K_eBIC,sep=""))
+#6*4
+```
+
+###  visualization of SNP   
+
+```{r}
+type_sorghum=env_y$RIL_ID[1:2133][!is.na(yij_ori1)]
+#汇总类簇的基因表型-各类基因的比例
+#数字为-1的是缺失
+snp_mat=as.data.frame(snp[,-c(1:4)])
+snp_0=apply(snp_mat==0,1,sum)
+snp_1=apply(snp_mat==1,1,sum)
+snp_2=apply(snp_mat==2,1,sum)
+snp_ratio=cbind(snp_0,snp_1,snp_2)/(snp_0+snp_1+snp_2)+0.01#基因表型占比
+save(snp_ratio,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_all.RData")
+snp_mat=apply(snp_mat,2,factor,levels=c(-1,0,1,2))
+#染色体位置
+chromosome_position=c(which(!duplicated(snp$Chromosome)),1462)
+```
+
+
+####FT-GDD    
+```{r}
+#GDD
+temp_reg_res=test_reg_PT_GDD
+temp_K=temp_reg_res$K_eBIC#K
+temp_clu=factor(temp_reg_res$selected_res_eBIC$labels[[1]],levels = 1:temp_K)#label
+sorghum_clu=matrix(unlist(tapply(temp_clu,type_sorghum,table)),ncol=3,byrow=T)#
+
+#计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+snp_ratio_list=vector("list",temp_K)
+snp_KL_list=vector("list",temp_K)
+for (k in 1:temp_K) 
+{
+temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+temp_snp=apply(temp_snp,2,factor,levels=c(-1,0,1,2))
+#统计SNP及其比例
+temp_snp_0=apply(temp_snp==0,1,sum)
+temp_snp_1=apply(temp_snp==1,1,sum)
+temp_snp_2=apply(temp_snp==2,1,sum)
+temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+snp_ratio_list[[k]]=temp_snp_ratio
+#计算与全部基因的夹角余弦
+KL_seq=NULL
+for (i in 1:nrow(temp_snp_ratio)) 
+{
+  temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+  KL_seq=c(KL_seq,temp_KL)
+}
+snp_KL_list[[k]]=KL_seq
+}
+
+#save
+snp_ratio_list_GDD=snp_ratio_list
+snp_KL_list_GDD=snp_KL_list
+save(snp_ratio_list_GDD,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_PT_GDD.RData")
+save(snp_KL_list_GDD,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_PT_GDD.RData")
+```
+emperical distribution of KL divergence of randomized clusters         
+```{r}
+#random
+temp_reg_res=test_reg_PT_GDD
+temp_K=temp_reg_res$K_eBIC#K
+prob_temp=table(temp_reg_res$selected_res_eBIC$labels[[1]])/2078
+
+#记录随机化的KL
+random_KL=vector("list",100)
+for (r in 1:100) 
+{
+  set.seed(r)
+  snp_KL_list=vector("list",temp_K)
+  temp_clu=apply(rmultinom(2078,1,prob =prob_temp),2,which.max)
+  #计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+  snp_ratio_list=vector("list",temp_K)
+  snp_KL_list=vector("list",temp_K)
+  for (k in 1:temp_K) 
+  {
+  temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+  temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+  #统计SNP及其比例
+  temp_snp_0=apply(temp_snp==0,1,sum)
+  temp_snp_1=apply(temp_snp==1,1,sum)
+  temp_snp_2=apply(temp_snp==2,1,sum)
+  temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+  snp_ratio_list[[k]]=temp_snp_ratio
+  #计算与全部基因的KL
+  KL_seq=NULL
+  for (i in 1:nrow(temp_snp_ratio)) 
+  {
+    temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+    KL_seq=c(KL_seq,temp_KL)
+  }
+  snp_KL_list[[k]]=KL_seq
+}
+random_KL[[r]]=snp_KL_list
+}
+#save
+save(random_KL,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_random_PT_GDD.RData")
+#上95分位数计算
+kl_df=NULL
+for (r in 1:100) {kl_df=c(kl_df,unlist(random_KL[[r]]))}
+kl_df=matrix(kl_df,ncol=100)
+kl_random095_GDD=matrix(apply(kl_df,1,quantile,probs=0.95),ncol=temp_K)
+
+```
+
+
+```{r}
+#可视化ggplot
+#可视化ggplot
+library(ggplot2)
+library(dplyr)
+temp_K=test_reg_PT_GDD$K_eBIC#K
+df_list <- list()
+#数据格式
+for (k in 1:temp_K) {
+  df <- data.frame(
+    Position = seq_along(snp_KL_list_GDD[[k]]),  # 生成 x 轴位置
+    KL_Value = snp_KL_list_GDD[[k]],             # Y 轴：KL 散度值
+    Cluster = paste("Cluster", k)                # 类簇标签
+  )
+  df_list[[k]] <- df
+}
+df_all <- bind_rows(df_list)  # 合并所有数据
+
+#95阈值
+df_threshold <- data.frame(
+  Position = seq_along(kl_random095_GDD[, 1]),  # 位置
+  KL_Threshold = as.vector(kl_random095_GDD),   # 95% 阈值
+  Cluster = rep(paste0("Cluster ", 1:temp_K), each = nrow(kl_random095_GDD))
+)
+
+#标注染色体
+mid_positions <- (chromosome_position[-length(chromosome_position)] + chromosome_position[-1]) / 2
+chrom_labels <- data.frame(
+Position = mid_positions,  # 标注位置：两条竖线之间的中点
+Label = as.character(1:length(mid_positions)),  #
+Cluster = unique(df_all$Cluster)[1]  # 只在一个 cluster 面板中标注
+)
+
+#画图
+p1_PT_GDD=ggplot(df_all, aes(x = Position, y = KL_Value)) +
+  geom_bar(stat = "identity", fill = "black") +  # 画柱状图
+  geom_vline(xintercept = chromosome_position, color = "darkgreen", linetype = "dashed") +  # 染色体分界
+  geom_line(data = df_threshold, aes(x = Position, y = KL_Threshold), color = "red", linetype = "dashed") +  # 红色阈值线
+  geom_text(data = chrom_labels, aes(x = Position, y = max(df_all$KL_Value, na.rm = TRUE) * 1.05, label = Label),
+            color = "darkgreen", size = 5, vjust = 1,alpha=0.5) +  # 在绿色竖线上方标号
+  facet_wrap(~ Cluster, ncol = 1, scales = "free_y") +  # 允许每个类簇单独调整 y 轴
+  labs(title = "KL Divergence from Clusters of FT-GDD~PT(t)", x = "Genomic Position", y = "KL Divergence") +
+  theme_minimal()
+
+p1_PT_GDD
+#6*5
+
+```
+
+####FT-DAP  
+```{r}
+#DAP
+temp_reg_res=test_reg_PT_DAP
+temp_K=temp_reg_res$K_eBIC#K
+temp_clu=factor(temp_reg_res$selected_res_eBIC$labels[[1]],levels = 1:temp_K)#label
+sorghum_clu=matrix(unlist(tapply(temp_clu,type_sorghum,table)),ncol=3,byrow=T)#
+#计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+snp_ratio_list=vector("list",temp_K)
+snp_KL_list=vector("list",temp_K)
+for (k in 1:temp_K) 
+{
+temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+temp_snp=apply(temp_snp,2,factor,levels=c(-1,0,1,2))
+#统计SNP及其比例
+temp_snp_0=apply(temp_snp==0,1,sum)
+temp_snp_1=apply(temp_snp==1,1,sum)
+temp_snp_2=apply(temp_snp==2,1,sum)
+temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+snp_ratio_list[[k]]=temp_snp_ratio
+#计算与全部基因的夹角余弦
+KL_seq=NULL
+for (i in 1:nrow(temp_snp_ratio)) 
+{
+  temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+  KL_seq=c(KL_seq,temp_KL)
+}
+snp_KL_list[[k]]=KL_seq
+}
+#save
+snp_ratio_list_DAP=snp_ratio_list
+snp_KL_list_DAP=snp_KL_list
+save(snp_ratio_list_DAP,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_PT_DAP.RData")
+save(snp_KL_list_DAP,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_PT_DAP.RData")
+
+```
+
+emperical distribution of KL divergence of randomized clusters    
+```{r}
+#random
+temp_reg_res=test_reg_PT_DAP
+temp_K=temp_reg_res$K_eBIC#K
+prob_temp=table(temp_reg_res$selected_res_eBIC$labels[[1]])/2078
+
+#记录随机化的KL
+random_KL=vector("list",100)
+for (r in 1:100) 
+{
+  set.seed(r)
+  snp_KL_list=vector("list",temp_K)
+  temp_clu=apply(rmultinom(2078,1,prob =prob_temp),2,which.max)
+  #计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+  snp_ratio_list=vector("list",temp_K)
+  snp_KL_list=vector("list",temp_K)
+  for (k in 1:temp_K) 
+  {
+  temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+  temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+  #统计SNP及其比例
+  temp_snp_0=apply(temp_snp==0,1,sum)
+  temp_snp_1=apply(temp_snp==1,1,sum)
+  temp_snp_2=apply(temp_snp==2,1,sum)
+  temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+  snp_ratio_list[[k]]=temp_snp_ratio
+  #计算与全部基因的KL
+  KL_seq=NULL
+  for (i in 1:nrow(temp_snp_ratio)) 
+  {
+    temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+    KL_seq=c(KL_seq,temp_KL)
+  }
+  snp_KL_list[[k]]=KL_seq
+}
+random_KL[[r]]=snp_KL_list
+}
+#save
+save(random_KL,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_random_PT_DAP.RData")
+#上95分位数计算
+kl_df=NULL
+for (r in 1:100) {kl_df=c(kl_df,unlist(random_KL[[r]]))}
+kl_df=matrix(kl_df,ncol=100)
+kl_random095_DAP=matrix(apply(kl_df,1,quantile,probs=0.95),ncol=temp_K)
+
+```
+
+
+```{r}
+#可视化ggplot
+library(ggplot2)
+library(dplyr)
+temp_K=test_reg_PT_DAP$K_eBIC#K
+df_list <- list()
+#数据格式
+for (k in 1:temp_K) {
+  df <- data.frame(
+    Position = seq_along(snp_KL_list_DAP[[k]]),  # 生成 x 轴位置
+    KL_Value = snp_KL_list_DAP[[k]],             # Y 轴：KL 散度值
+    Cluster = paste("Cluster", k)                # 类簇标签
+  )
+  df_list[[k]] <- df
+}
+df_all <- bind_rows(df_list)  # 合并所有数据
+
+#95阈值
+df_threshold <- data.frame(
+  Position = seq_along(kl_random095_DAP[, 1]),  # 位置
+  KL_Threshold = as.vector(kl_random095_DAP),   # 95% 阈值
+  Cluster = rep(paste0("Cluster ", 1:temp_K), each = nrow(kl_random095_DAP))
+)
+
+#标注染色体
+mid_positions <- (chromosome_position[-length(chromosome_position)] + chromosome_position[-1]) / 2
+chrom_labels <- data.frame(
+Position = mid_positions,  # 标注位置：两条竖线之间的中点
+Label = as.character(1:length(mid_positions)),  #
+Cluster = unique(df_all$Cluster)[1]  # 只在一个 cluster 面板中标注
+)
+
+#画图
+p2_PT_DAP=ggplot(df_all, aes(x = Position, y = KL_Value)) +
+  geom_bar(stat = "identity", fill = "black") +  # 画柱状图
+  geom_vline(xintercept = chromosome_position, color = "darkgreen", linetype = "dashed") +  # 染色体分界
+  geom_line(data = df_threshold, aes(x = Position, y = KL_Threshold), color = "red", linetype = "dashed") +  # 红色阈值线
+  geom_text(data = chrom_labels, aes(x = Position, y = max(df_all$KL_Value, na.rm = TRUE) * 1.05, label = Label),
+            color = "darkgreen", size = 5, vjust = 1,alpha=0.5) +  # 在绿色竖线上方标号
+  facet_wrap(~ Cluster, ncol = 1, scales = "free_y") +  # 允许每个类簇单独调整 y 轴
+  labs(title = "KL Divergence from Clusters of FT-DAP~PT(t)", x = "Genomic Position", y = "KL Divergence") +
+  theme_minimal()
+
+p2_PT_DAP
+#6*5
+```
+
+## Prediction based on GDD    
+```{r}
+library(entropy)
+library(fda)
+library(FdaCluReg)
+snp=read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp.csv",encoding = "UTF-8")
+env_x=read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/env.csv",encoding = "UTF-8")
+env_y=read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/env_y.csv",encoding = "UTF-8")
+
+ari_fun=function(x)
+{
+  library(igraph)
+  ari_seq=NULL
+  n=ncol(x)
+  for (i in 2:n) 
+  {
+    for (j in 1:(i-1))
+      {
+      ari_seq=c(ari_seq,compare(x[,i],x[,j],method="adjusted.rand"))
+    }
+  }
+  return(ari_seq)
+}
+
+PT=env_x$GDD*env_x$DL
+PT_mat=matrix(PT, nrow = 122)
+GDD_mat=matrix(env_x$GDD, nrow = 122)
+DL_mat=matrix(env_x$DL, nrow = 122)
+```
+data preparation(centralization and standardization)   
+```{r}
+#均值函数 NA的删除
+FT_dap_mat=matrix(as.numeric(env_y$FTdap),nrow=474)
+FT_dap_mat=(FT_dap_mat[1:237,]+FT_dap_mat[237+1:237,])/2
+#种植日期计算的flower time
+FT_gdd_mat=matrix(as.numeric(env_y$FTgdd),nrow=474)#GDD计算的flower time
+FT_gdd_mat=(FT_gdd_mat[1:237,]+FT_gdd_mat[237+1:237,])/2
+FT_RIL_mat=matrix(env_y$RIL_ID,nrow=474)[,1]#种类
+env_code=env_y$Env_code[!duplicated(env_y$Env_code)]
+colnames(FT_dap_mat)=env_code;colnames(FT_gdd_mat)=env_code
+
+xij_mat=GDD_mat[,rep(1:9,each=237)][1:121,]
+#xij中心化
+xij_mean=apply(xij_mat,1,mean)
+xij_mat=xij_mat-xij_mean
+yij_ori1=as.numeric(FT_gdd_mat)
+yij_ori2=as.numeric(FT_dap_mat)
+#NA清理 采样 并且对Y进行标准化处理
+yij1=scale(yij_ori1[!is.na(yij_ori1)])
+yij2=scale(yij_ori2[!is.na(yij_ori2)])
+xij_list=list(xij_mat[,!is.na(yij_ori1)])
+
+sample_index=1:length(yij1)#sample(length(yij),1000)
+yij_test1=yij1[sample_index]
+yij_test2=yij2[sample_index]
+xij_test=list(xij_mat[,!is.na(yij_ori1)][,sample_index])
+
+
+#平滑测试
+basis_need=create.bspline.basis(rangeval = seq(1,121,3))
+smoothed_x=smooth.basis(1:121,xij_list[[1]],basis_need)
+
+```
+visualization of centralized GDD(t)       
+```{r}
+plot(smoothed_x$fd[sample(length(yij_test1),1000)],ylab = "GDD")
+```
+
+### algorithm implementation    
+```{r eval=FALSE}
+test_reg_GDD_GDD=gibbs_clusterwise_regression_auto(xij_test,yij_test1,basis_need,sample_t = 1:121,
+                                  K_max =4,
+                                  rounds = 110,burning_period = 10,lambda = 1,
+                                  true_label = rep(1,length(yij_test1)),var_ratio = 0.9,method = "lad")
+
+test_reg_GDD_DAP=gibbs_clusterwise_regression_auto(xij_test,yij_test2,basis_need,sample_t = 1:121,
+                                  K_max =4,
+                                  rounds = 110,burning_period = 10,lambda = 1,
+                                  true_label = rep(1,length(yij_test2)),var_ratio = 0.9,method = "lad")
+
+save(test_reg_GDD_GDD,file = "~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_GDD_GDD_lad.RData")
+save(test_reg_GDD_DAP,file = "~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_GDD_DAP_lad.RData")
+```
+
+
+## prediction with DL   
+```{r}
+#均值函数 NA的删除
+FT_dap_mat=matrix(as.numeric(env_y$FTdap),nrow=474)
+FT_dap_mat=(FT_dap_mat[1:237,]+FT_dap_mat[237+1:237,])/2
+#种植日期计算的flower time
+FT_gdd_mat=matrix(as.numeric(env_y$FTgdd),nrow=474)#GDD计算的flower time
+FT_gdd_mat=(FT_gdd_mat[1:237,]+FT_gdd_mat[237+1:237,])/2
+FT_RIL_mat=matrix(env_y$RIL_ID,nrow=474)[,1]#种类
+env_code=env_y$Env_code[!duplicated(env_y$Env_code)]
+colnames(FT_dap_mat)=env_code;colnames(FT_gdd_mat)=env_code
+
+xij_mat=DL_mat[,rep(1:9,each=237)][1:121,]
+#xij中心化
+xij_mean=apply(xij_mat,1,mean)
+xij_mat=xij_mat-xij_mean
+yij_ori1=as.numeric(FT_gdd_mat)
+yij_ori2=as.numeric(FT_dap_mat)
+#NA清理 采样 并且对Y进行标准化处理
+yij1=scale(yij_ori1[!is.na(yij_ori1)])
+yij2=scale(yij_ori2[!is.na(yij_ori2)])
+xij_list=list(xij_mat[,!is.na(yij_ori1)])
+
+sample_index=1:length(yij1)#sample(length(yij),1000)
+yij_test1=yij1[sample_index]
+yij_test2=yij2[sample_index]
+xij_test=list(xij_mat[,!is.na(yij_ori1)][,sample_index])
+
+
+#平滑测试
+basis_need=create.bspline.basis(rangeval = seq(1,121,3))
+smoothed_x=smooth.basis(1:121,xij_list[[1]],basis_need)
+
+```
+visualization of centralized DL(t)   
+```{r}
+plot(smoothed_x$fd[sample(length(yij_test1),1000)],ylab = "DL")
+#5*5
+```
+
+
+```{r eval=FALSE}
+test_reg_DL_GDD=gibbs_clusterwise_regression_auto(xij_test,yij_test1,basis_need,sample_t = 1:121,
+                                  K_max =4,
+                                  rounds = 110,burning_period = 10,lambda = 1,
+                                  true_label = rep(1,length(yij_test1)),var_ratio = 0.9,method = "lad")
+
+test_reg_DL_DAP=gibbs_clusterwise_regression_auto(xij_test,yij_test2,basis_need,sample_t = 1:121,
+                                  K_max =4,
+                                  rounds = 110,burning_period = 10,lambda = 1,
+                                  true_label = rep(1,length(yij_test2)),var_ratio = 0.9,method = "lad")
+
+save(test_reg_DL_GDD,file = "~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_DL_GDD_lad.RData")
+save(test_reg_DL_DAP,file = "~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_DL_DAP_lad.RData")
+```
+
+## visualization of prediction based on DL(t) and GDD(t)   
+###  GDD(t) part 
+#### visualization of coefficient     
+```{r}
+load("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_GDD_GDD_lad.RData")
+load("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_GDD_DAP_lad.RData")
+#画图
+par(mfrow=c(1,1))
+fd_coef_GDD=t(test_reg_GDD_GDD$selected_res_eBIC$coefficients[[1]][-1,])%*%t(test_reg_GDD_GDD$selected_res_eBIC$fpca[[1]]$harmonics$coefs[,1:5])
+test_coef_fd_GDD=fd(t(fd_coef_GDD),test_reg_GDD_GDD$selected_res_eBIC$fpca[[1]]$harmonics$basis)
+plot(test_coef_fd_GDD,main=paste("FT-GDD~GDD(t) K=",test_reg_GDD_GDD$K_eBIC,sep = ""))
+
+fd_coef_DAP=t(test_reg_GDD_DAP$selected_res_eBIC$coefficients[[1]][-1,])%*%t(test_reg_GDD_DAP$selected_res_eBIC$fpca[[1]]$harmonics$coefs[,1:5])
+test_coef_fd_DAP=fd(t(fd_coef_DAP),test_reg_GDD_DAP$selected_res_eBIC$fpca[[1]]$harmonics$basis)
+plot(test_coef_fd_DAP,main=paste("FT-DAP~GDD(t) K=",test_reg_GDD_DAP$K_eBIC,sep=""))
+#6*4
+```
+
+```{r}
+type_sorghum=env_y$RIL_ID[1:2133][!is.na(yij_ori1)]
+#汇总类簇的基因表型-各类基因的比例
+#数字为-1的是缺失
+snp_mat=as.data.frame(snp[,-c(1:4)])
+snp_0=apply(snp_mat==0,1,sum)
+snp_1=apply(snp_mat==1,1,sum)
+snp_2=apply(snp_mat==2,1,sum)
+snp_ratio=cbind(snp_0,snp_1,snp_2)/(snp_0+snp_1+snp_2)+0.01#基因表型占比
+save(snp_ratio,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_all.RData")
+snp_mat=apply(snp_mat,2,factor,levels=c(-1,0,1,2))
+#染色体位置
+chromosome_position=c(which(!duplicated(snp$Chromosome)),1462)
+```
+
+
+
+#### FT-GDD  
+```{r}
+#GDD
+temp_reg_res=test_reg_GDD_GDD
+temp_K=temp_reg_res$K_eBIC#K
+temp_clu=factor(temp_reg_res$selected_res_eBIC$labels[[1]],levels = 1:temp_K)#label
+sorghum_clu=matrix(unlist(tapply(temp_clu,type_sorghum,table)),ncol=3,byrow=T)#
+
+#计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+snp_ratio_list=vector("list",temp_K)
+snp_KL_list=vector("list",temp_K)
+for (k in 1:temp_K) 
+{
+temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+temp_snp=apply(temp_snp,2,factor,levels=c(-1,0,1,2))
+#统计SNP及其比例
+temp_snp_0=apply(temp_snp==0,1,sum)
+temp_snp_1=apply(temp_snp==1,1,sum)
+temp_snp_2=apply(temp_snp==2,1,sum)
+temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+snp_ratio_list[[k]]=temp_snp_ratio
+#计算与全部基因的夹角余弦
+KL_seq=NULL
+for (i in 1:nrow(temp_snp_ratio)) 
+{
+  temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+  KL_seq=c(KL_seq,temp_KL)
+}
+snp_KL_list[[k]]=KL_seq
+}
+
+#save
+snp_ratio_list_GDD=snp_ratio_list
+snp_KL_list_GDD=snp_KL_list
+save(snp_ratio_list_GDD,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_GDD_GDD.RData")
+save(snp_KL_list_GDD,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_GDD_GDD.RData")
+```
+
+emperical distribution of KL divergence of randomized clusters     
+```{r}
+#random
+temp_reg_res=test_reg_GDD_GDD
+temp_K=temp_reg_res$K_eBIC#K
+prob_temp=table(temp_reg_res$selected_res_eBIC$labels[[1]])/2078
+
+#记录随机化的KL
+random_KL=vector("list",100)
+for (r in 1:100) 
+{
+  set.seed(r)
+  snp_KL_list=vector("list",temp_K)
+  temp_clu=apply(rmultinom(2078,1,prob =prob_temp),2,which.max)
+  #计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+  snp_ratio_list=vector("list",temp_K)
+  snp_KL_list=vector("list",temp_K)
+  for (k in 1:temp_K) 
+  {
+  temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+  temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+  #统计SNP及其比例
+  temp_snp_0=apply(temp_snp==0,1,sum)
+  temp_snp_1=apply(temp_snp==1,1,sum)
+  temp_snp_2=apply(temp_snp==2,1,sum)
+  temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+  snp_ratio_list[[k]]=temp_snp_ratio
+  #计算与全部基因的KL
+  KL_seq=NULL
+  for (i in 1:nrow(temp_snp_ratio)) 
+  {
+    temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+    KL_seq=c(KL_seq,temp_KL)
+  }
+  snp_KL_list[[k]]=KL_seq
+}
+random_KL[[r]]=snp_KL_list
+}
+#save
+save(random_KL,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_random_GDD_GDD.RData")
+#上95分位数计算
+kl_df=NULL
+for (r in 1:100) {kl_df=c(kl_df,unlist(random_KL[[r]]))}
+kl_df=matrix(kl_df,ncol=100)
+kl_random095_GDD=matrix(apply(kl_df,1,quantile,probs=0.95),ncol=temp_K)
+
+```
+
+
+```{r}
+#可视化ggplot
+#可视化ggplot
+library(ggplot2)
+library(dplyr)
+temp_K=temp_reg_res$K_eBIC#K
+df_list <- list()
+#数据格式
+for (k in 1:temp_K) {
+  df <- data.frame(
+    Position = seq_along(snp_KL_list_GDD[[k]]),  # 生成 x 轴位置
+    KL_Value = snp_KL_list_GDD[[k]],             # Y 轴：KL 散度值
+    Cluster = paste("Cluster", k)                # 类簇标签
+  )
+  df_list[[k]] <- df
+}
+df_all <- bind_rows(df_list)  # 合并所有数据
+
+#95阈值
+df_threshold <- data.frame(
+  Position = seq_along(kl_random095_GDD[, 1]),  # 位置
+  KL_Threshold = as.vector(kl_random095_GDD),   # 95% 阈值
+  Cluster = rep(paste0("Cluster ", 1:temp_K), each = nrow(kl_random095_GDD))
+)
+
+#标注染色体
+mid_positions <- (chromosome_position[-length(chromosome_position)] + chromosome_position[-1]) / 2
+chrom_labels <- data.frame(
+Position = mid_positions,  # 标注位置：两条竖线之间的中点
+Label = as.character(1:length(mid_positions)),  #
+Cluster = unique(df_all$Cluster)[1]  # 只在一个 cluster 面板中标注
+)
+
+#画图
+p1_GDD_GDD=ggplot(df_all, aes(x = Position, y = KL_Value)) +
+  geom_bar(stat = "identity", fill = "black") +  # 画柱状图
+  geom_vline(xintercept = chromosome_position, color = "darkgreen", linetype = "dashed") +  # 染色体分界
+  geom_line(data = df_threshold, aes(x = Position, y = KL_Threshold), color = "red", linetype = "dashed") +  # 红色阈值线
+  geom_text(data = chrom_labels, aes(x = Position, y = max(df_all$KL_Value, na.rm = TRUE) * 1.05, label = Label),
+            color = "darkgreen", size = 5, vjust = 1,alpha=0.5) +  # 在绿色竖线上方标号
+  facet_wrap(~ Cluster, ncol = 1, scales = "free_y") +  # 允许每个类簇单独调整 y 轴
+  labs(title = "KL Divergence from Clusters of FT-GDD~GDD(t)", x = "Genomic Position", y = "KL Divergence") +
+  theme_minimal()
+
+p1_GDD_GDD
+#6*5
+```
+
+#### FT-DAP   
+```{r}
+#DAP
+temp_reg_res=test_reg_GDD_DAP
+temp_K=temp_reg_res$K_eBIC#K
+temp_clu=factor(temp_reg_res$selected_res_eBIC$labels[[1]],levels = 1:temp_K)#label
+sorghum_clu=matrix(unlist(tapply(temp_clu,type_sorghum,table)),ncol=3,byrow=T)#
+#计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+snp_ratio_list=vector("list",temp_K)
+snp_KL_list=vector("list",temp_K)
+for (k in 1:temp_K) 
+{
+temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+temp_snp=apply(temp_snp,2,factor,levels=c(-1,0,1,2))
+#统计SNP及其比例
+temp_snp_0=apply(temp_snp==0,1,sum)
+temp_snp_1=apply(temp_snp==1,1,sum)
+temp_snp_2=apply(temp_snp==2,1,sum)
+temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+snp_ratio_list[[k]]=temp_snp_ratio
+#计算与全部基因的夹角余弦
+KL_seq=NULL
+for (i in 1:nrow(temp_snp_ratio)) 
+{
+  temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+  KL_seq=c(KL_seq,temp_KL)
+}
+snp_KL_list[[k]]=KL_seq
+}
+#save
+snp_ratio_list_DAP=snp_ratio_list
+snp_KL_list_DAP=snp_KL_list
+save(snp_ratio_list_DAP,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_GDD_DAP.RData")
+save(snp_KL_list_DAP,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_GDD_DAP.RData")
+
+```
+
+emperical distribution of KL divergence of randomized clusters    
+```{r}
+#random
+temp_reg_res=test_reg_GDD_DAP
+temp_K=temp_reg_res$K_eBIC#K
+prob_temp=table(temp_reg_res$selected_res_eBIC$labels[[1]])/2078
+
+#记录随机化的KL
+random_KL=vector("list",100)
+for (r in 1:100) 
+{
+  set.seed(r)
+  snp_KL_list=vector("list",temp_K)
+  temp_clu=apply(rmultinom(2078,1,prob =prob_temp),2,which.max)
+  #计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+  snp_ratio_list=vector("list",temp_K)
+  snp_KL_list=vector("list",temp_K)
+  for (k in 1:temp_K) 
+  {
+  temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+  temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+  #统计SNP及其比例
+  temp_snp_0=apply(temp_snp==0,1,sum)
+  temp_snp_1=apply(temp_snp==1,1,sum)
+  temp_snp_2=apply(temp_snp==2,1,sum)
+  temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+  snp_ratio_list[[k]]=temp_snp_ratio
+  #计算与全部基因的KL
+  KL_seq=NULL
+  for (i in 1:nrow(temp_snp_ratio)) 
+  {
+    temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+    KL_seq=c(KL_seq,temp_KL)
+  }
+  snp_KL_list[[k]]=KL_seq
+}
+random_KL[[r]]=snp_KL_list
+}
+#save
+save(random_KL,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_random_GDD_DAP.RData")
+#上95分位数计算
+kl_df=NULL
+for (r in 1:100) {kl_df=c(kl_df,unlist(random_KL[[r]]))}
+kl_df=matrix(kl_df,ncol=100)
+kl_random095_DAP=matrix(apply(kl_df,1,quantile,probs=0.95),ncol=temp_K)
+
+```
+
+
+```{r}
+#可视化ggplot
+library(ggplot2)
+library(dplyr)
+temp_K=temp_reg_res$K_eBIC#K
+df_list <- list()
+#数据格式
+for (k in 1:temp_K) {
+  df <- data.frame(
+    Position = seq_along(snp_KL_list_DAP[[k]]),  # 生成 x 轴位置
+    KL_Value = snp_KL_list_DAP[[k]],             # Y 轴：KL 散度值
+    Cluster = paste("Cluster", k)                # 类簇标签
+  )
+  df_list[[k]] <- df
+}
+df_all <- bind_rows(df_list)  # 合并所有数据
+
+#95阈值
+df_threshold <- data.frame(
+  Position = seq_along(kl_random095_DAP[, 1]),  # 位置
+  KL_Threshold = as.vector(kl_random095_DAP),   # 95% 阈值
+  Cluster = rep(paste0("Cluster ", 1:temp_K), each = nrow(kl_random095_DAP))
+)
+
+#标注染色体
+mid_positions <- (chromosome_position[-length(chromosome_position)] + chromosome_position[-1]) / 2
+chrom_labels <- data.frame(
+Position = mid_positions,  # 标注位置：两条竖线之间的中点
+Label = as.character(1:length(mid_positions)),  #
+Cluster = unique(df_all$Cluster)[1]  # 只在一个 cluster 面板中标注
+)
+
+#画图
+p2_GDD_DAP=ggplot(df_all, aes(x = Position, y = KL_Value)) +
+  geom_bar(stat = "identity", fill = "black") +  # 画柱状图
+  geom_vline(xintercept = chromosome_position, color = "darkgreen", linetype = "dashed") +  # 染色体分界
+  geom_line(data = df_threshold, aes(x = Position, y = KL_Threshold), color = "red", linetype = "dashed") +  # 红色阈值线
+  geom_text(data = chrom_labels, aes(x = Position, y = max(df_all$KL_Value, na.rm = TRUE) * 1.05, label = Label),
+            color = "darkgreen", size = 5, vjust = 1,alpha=0.5) +  # 在绿色竖线上方标号
+  facet_wrap(~ Cluster, ncol = 1, scales = "free_y") +  # 允许每个类簇单独调整 y 轴
+  labs(title = "KL Divergence from Cluster of FT-DAP~GDD(t)", x = "Genomic Position", y = "KL Divergence") +
+  theme_minimal()
+
+p2_GDD_DAP
+#6*5
+```
+## DL part
+### visualization of coefficient      
+揭示不同品系的高粱开花时间收到PT影响的差异性，对此处差异性进行解读，最好是解读为容易说明的性状  
+```{r}
+load("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_DL_GDD_lad.RData")
+load("~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/test_reg_DL_DAP_lad.RData")
+#画图
+par(mfrow=c(1,1))
+fd_coef_GDD=t(test_reg_DL_GDD$selected_res_eBIC$coefficients[[1]][-1,])%*%t(test_reg_DL_GDD$selected_res_eBIC$fpca[[1]]$harmonics$coefs[,1:2])
+test_coef_fd_GDD=fd(t(fd_coef_GDD),test_reg_DL_GDD$selected_res_eBIC$fpca[[1]]$harmonics$basis)
+plot(test_coef_fd_GDD,main=paste("FT_GDD~DL(t) K=",test_reg_DL_GDD$K_eBIC,sep = ""))
+
+fd_coef_DAP=t(test_reg_DL_DAP$selected_res_eBIC$coefficients[[1]][-1,])%*%t(test_reg_DL_DAP$selected_res_eBIC$fpca[[1]]$harmonics$coefs[,1:2])
+test_coef_fd_DAP=fd(t(fd_coef_DAP),test_reg_DL_DAP$selected_res_eBIC$fpca[[1]]$harmonics$basis)
+plot(test_coef_fd_DAP,main=paste("FT_DAP~DL(t) K=",test_reg_DL_DAP$K_eBIC,sep=""))
+#6*4
+```
+
+```{r}
+type_sorghum=env_y$RIL_ID[1:2133][!is.na(yij_ori1)]
+#汇总类簇的基因表型-各类基因的比例
+#数字为-1的是缺失
+snp_mat=as.data.frame(snp[,-c(1:4)])
+snp_0=apply(snp_mat==0,1,sum)
+snp_1=apply(snp_mat==1,1,sum)
+snp_2=apply(snp_mat==2,1,sum)
+snp_ratio=cbind(snp_0,snp_1,snp_2)/(snp_0+snp_1+snp_2)+0.01#基因表型占比
+save(snp_ratio,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_all.RData")
+snp_mat=apply(snp_mat,2,factor,levels=c(-1,0,1,2))
+#染色体位置
+chromosome_position=c(which(!duplicated(snp$Chromosome)),1462)
+```
+
+
+
+#### FT-GDD
+```{r}
+#GDD
+temp_reg_res=test_reg_DL_GDD
+temp_K=temp_reg_res$K_eBIC#K
+temp_clu=factor(temp_reg_res$selected_res_eBIC$labels[[1]],levels = 1:temp_K)#label
+sorghum_clu=matrix(unlist(tapply(temp_clu,type_sorghum,table)),ncol=3,byrow=T)#
+
+#计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+snp_ratio_list=vector("list",temp_K)
+snp_KL_list=vector("list",temp_K)
+for (k in 1:temp_K) 
+{
+temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+temp_snp=apply(temp_snp,2,factor,levels=c(-1,0,1,2))
+#统计SNP及其比例
+temp_snp_0=apply(temp_snp==0,1,sum)
+temp_snp_1=apply(temp_snp==1,1,sum)
+temp_snp_2=apply(temp_snp==2,1,sum)
+temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+snp_ratio_list[[k]]=temp_snp_ratio
+#计算与全部基因的夹角余弦
+KL_seq=NULL
+for (i in 1:nrow(temp_snp_ratio)) 
+{
+  temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+  KL_seq=c(KL_seq,temp_KL)
+}
+snp_KL_list[[k]]=KL_seq
+}
+
+#save
+snp_ratio_list_GDD=snp_ratio_list
+snp_KL_list_GDD=snp_KL_list
+save(snp_ratio_list_GDD,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_DL_GDD.RData")
+save(snp_KL_list_GDD,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_DL_GDD.RData")
+```
+emperical distribution of KL divergence of randomized clusters     
+```{r}
+#random
+temp_reg_res=test_reg_DL_GDD
+temp_K=temp_reg_res$K_eBIC#K
+prob_temp=table(temp_reg_res$selected_res_eBIC$labels[[1]])/2078
+
+#记录随机化的KL
+random_KL=vector("list",100)
+for (r in 1:100) 
+{
+  set.seed(r)
+  snp_KL_list=vector("list",temp_K)
+  temp_clu=apply(rmultinom(2078,1,prob =prob_temp),2,which.max)
+  #计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+  snp_ratio_list=vector("list",temp_K)
+  snp_KL_list=vector("list",temp_K)
+  for (k in 1:temp_K) 
+  {
+  temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+  temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+  #统计SNP及其比例
+  temp_snp_0=apply(temp_snp==0,1,sum)
+  temp_snp_1=apply(temp_snp==1,1,sum)
+  temp_snp_2=apply(temp_snp==2,1,sum)
+  temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+  snp_ratio_list[[k]]=temp_snp_ratio
+  #计算与全部基因的KL
+  KL_seq=NULL
+  for (i in 1:nrow(temp_snp_ratio)) 
+  {
+    temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+    KL_seq=c(KL_seq,temp_KL)
+  }
+  snp_KL_list[[k]]=KL_seq
+}
+random_KL[[r]]=snp_KL_list
+}
+#save
+save(random_KL,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_random_DL_GDD.RData")
+#上95分位数计算
+kl_df=NULL
+for (r in 1:100) {kl_df=c(kl_df,unlist(random_KL[[r]]))}
+kl_df=matrix(kl_df,ncol=100)
+kl_random095_GDD=matrix(apply(kl_df,1,quantile,probs=0.95),ncol=temp_K)
+
+```
+
+
+```{r}
+#可视化ggplot
+#可视化ggplot
+library(ggplot2)
+library(dplyr)
+temp_K=temp_reg_res$K_eBIC#K
+df_list <- list()
+#数据格式
+for (k in 1:temp_K) {
+  df <- data.frame(
+    Position = seq_along(snp_KL_list_GDD[[k]]),  # 生成 x 轴位置
+    KL_Value = snp_KL_list_GDD[[k]],             # Y 轴：KL 散度值
+    Cluster = paste("Cluster", k)                # 类簇标签
+  )
+  df_list[[k]] <- df
+}
+df_all <- bind_rows(df_list)  # 合并所有数据
+
+#95阈值
+df_threshold <- data.frame(
+  Position = seq_along(kl_random095_GDD[, 1]),  # 位置
+  KL_Threshold = as.vector(kl_random095_GDD),   # 95% 阈值
+  Cluster = rep(paste0("Cluster ", 1:temp_K), each = nrow(kl_random095_GDD))
+)
+
+#标注染色体
+mid_positions <- (chromosome_position[-length(chromosome_position)] + chromosome_position[-1]) / 2
+chrom_labels <- data.frame(
+Position = mid_positions,  # 标注位置：两条竖线之间的中点
+Label = as.character(1:length(mid_positions)),  #
+Cluster = unique(df_all$Cluster)[1]  # 只在一个 cluster 面板中标注
+)
+
+#画图
+p1_GDD_DL=ggplot(df_all, aes(x = Position, y = KL_Value)) +
+  geom_bar(stat = "identity", fill = "black") +  # 画柱状图
+  geom_vline(xintercept = chromosome_position, color = "darkgreen", linetype = "dashed") +  # 染色体分界
+  geom_line(data = df_threshold, aes(x = Position, y = KL_Threshold), color = "red", linetype = "dashed") +  # 红色阈值线
+  geom_text(data = chrom_labels, aes(x = Position, y = max(df_all$KL_Value, na.rm = TRUE) * 1.05, label = Label),
+            color = "darkgreen", size = 5, vjust = 1,alpha=0.5) +  # 在绿色竖线上方标号
+  facet_wrap(~ Cluster, ncol = 1, scales = "free_y") +  # 允许每个类簇单独调整 y 轴
+  labs(title = "KL Divergence from Clusters of FT-GDD~DL(t)", x = "Genomic Position", y = "KL Divergence") +
+  theme_minimal()
+
+p1_GDD_DL
+
+```
+
+#### FT_DAP   
+```{r}
+#DAP
+temp_reg_res=test_reg_DL_DAP
+temp_K=temp_reg_res$K_eBIC#K
+temp_clu=factor(temp_reg_res$selected_res_eBIC$labels[[1]],levels = 1:temp_K)#label
+sorghum_clu=matrix(unlist(tapply(temp_clu,type_sorghum,table)),ncol=3,byrow=T)#
+#计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+snp_ratio_list=vector("list",temp_K)
+snp_KL_list=vector("list",temp_K)
+for (k in 1:temp_K) 
+{
+temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+temp_snp=apply(temp_snp,2,factor,levels=c(-1,0,1,2))
+#统计SNP及其比例
+temp_snp_0=apply(temp_snp==0,1,sum)
+temp_snp_1=apply(temp_snp==1,1,sum)
+temp_snp_2=apply(temp_snp==2,1,sum)
+temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+snp_ratio_list[[k]]=temp_snp_ratio
+#计算与全部基因的夹角余弦
+KL_seq=NULL
+for (i in 1:nrow(temp_snp_ratio)) 
+{
+  temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+  KL_seq=c(KL_seq,temp_KL)
+}
+snp_KL_list[[k]]=KL_seq
+}
+#save
+snp_ratio_list_DAP=snp_ratio_list
+snp_KL_list_DAP=snp_KL_list
+save(snp_ratio_list_DAP,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_ratio_DL_DAP.RData")
+save(snp_KL_list_DAP,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_DL_DAP.RData")
+
+```
+
+emperical distribution of KL divergence of randomized clusters   
+```{r}
+#random
+temp_reg_res=test_reg_DL_DAP
+temp_K=temp_reg_res$K_eBIC#K
+prob_temp=table(temp_reg_res$selected_res_eBIC$labels[[1]])/2078
+
+#记录随机化的KL
+random_KL=vector("list",100)
+for (r in 1:100) 
+{
+  set.seed(r)
+  snp_KL_list=vector("list",temp_K)
+  temp_clu=apply(rmultinom(2078,1,prob =prob_temp),2,which.max)
+  #计算单个类簇的基因表型矩阵，并计算与全部平均水平之间的KL散度
+  snp_ratio_list=vector("list",temp_K)
+  snp_KL_list=vector("list",temp_K)
+  for (k in 1:temp_K) 
+  {
+  temp_clu_sorghum=type_sorghum[temp_clu==k]#当前类簇高粱在snp_mat的位置，同一种高粱可能被分入几类当中（不同环境的影响）
+  temp_snp=snp_mat[,match(temp_clu_sorghum,colnames(snp_mat))]#当前类的SNP
+  #统计SNP及其比例
+  temp_snp_0=apply(temp_snp==0,1,sum)
+  temp_snp_1=apply(temp_snp==1,1,sum)
+  temp_snp_2=apply(temp_snp==2,1,sum)
+  temp_snp_ratio=cbind(temp_snp_0,temp_snp_1,temp_snp_2)/(temp_snp_0+temp_snp_1+temp_snp_2)+0.01
+  snp_ratio_list[[k]]=temp_snp_ratio
+  #计算与全部基因的KL
+  KL_seq=NULL
+  for (i in 1:nrow(temp_snp_ratio)) 
+  {
+    temp_KL=KL.plugin(temp_snp_ratio[i,],snp_ratio[i,])#计算当前SNP 类簇与整体的区别
+    KL_seq=c(KL_seq,temp_KL)
+  }
+  snp_KL_list[[k]]=KL_seq
+}
+random_KL[[r]]=snp_KL_list
+}
+#save
+save(random_KL,file="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt/snp_KL_random_DL_DAP.RData")
+#上95分位数计算
+kl_df=NULL
+for (r in 1:100) {kl_df=c(kl_df,unlist(random_KL[[r]]))}
+kl_df=matrix(kl_df,ncol=100)
+kl_random095_DAP=matrix(apply(kl_df,1,quantile,probs=0.95),ncol=temp_K)
+
+```
+
+
+```{r}
+#可视化ggplot
+library(ggplot2)
+library(dplyr)
+temp_K=temp_reg_res$K_eBIC#K
+df_list <- list()
+#数据格式
+for (k in 1:temp_K) {
+  df <- data.frame(
+    Position = seq_along(snp_KL_list_DAP[[k]]),  # 生成 x 轴位置
+    KL_Value = snp_KL_list_DAP[[k]],             # Y 轴：KL 散度值
+    Cluster = paste("Cluster", k)                # 类簇标签
+  )
+  df_list[[k]] <- df
+}
+df_all <- bind_rows(df_list)  # 合并所有数据
+
+#95阈值
+df_threshold <- data.frame(
+  Position = seq_along(kl_random095_DAP[, 1]),  # 位置
+  KL_Threshold = as.vector(kl_random095_DAP),   # 95% 阈值
+  Cluster = rep(paste0("Cluster ", 1:temp_K), each = nrow(kl_random095_DAP))
+)
+
+#标注染色体
+mid_positions <- (chromosome_position[-length(chromosome_position)] + chromosome_position[-1]) / 2
+chrom_labels <- data.frame(
+Position = mid_positions,  # 标注位置：两条竖线之间的中点
+Label = as.character(1:length(mid_positions)),  #
+Cluster = unique(df_all$Cluster)[1]  # 只在一个 cluster 面板中标注
+)
+
+#画图
+p2_DL_DAP=ggplot(df_all, aes(x = Position, y = KL_Value)) +
+  geom_bar(stat = "identity", fill = "black") +  # 画柱状图
+  geom_vline(xintercept = chromosome_position, color = "darkgreen", linetype = "dashed") +  # 染色体分界
+  geom_line(data = df_threshold, aes(x = Position, y = KL_Threshold), color = "red", linetype = "dashed") +  # 红色阈值线
+  geom_text(data = chrom_labels, aes(x = Position, y = max(df_all$KL_Value, na.rm = TRUE) * 1.05, label = Label),
+            color = "darkgreen", size = 5, vjust = 1,alpha=0.5) +  # 在绿色竖线上方标号
+  facet_wrap(~ Cluster, ncol = 1, scales = "free_y") +  # 允许每个类簇单独调整 y 轴
+  labs(title = "KL Divergence from Cluster of FT-DAP~DL(t)", x = "Genomic Position", y = "KL Divergence") +
+  theme_minimal()
+
+p2_DL_DAP
+```
+
+
+## stablablity of GCFLR  
+### Prediction based on DL(t) and FT-GDD using LAD loss        
+```{r}
+#均值函数 NA的删除
+FT_dap_mat=matrix(as.numeric(env_y$FTdap),nrow=474)
+FT_dap_mat=(FT_dap_mat[1:237,]+FT_dap_mat[237+1:237,])/2
+#种植日期计算的flower time
+FT_gdd_mat=matrix(as.numeric(env_y$FTgdd),nrow=474)#GDD计算的flower time
+FT_gdd_mat=(FT_gdd_mat[1:237,]+FT_gdd_mat[237+1:237,])/2
+FT_RIL_mat=matrix(env_y$RIL_ID,nrow=474)[,1]#种类
+env_code=env_y$Env_code[!duplicated(env_y$Env_code)]
+colnames(FT_dap_mat)=env_code;colnames(FT_gdd_mat)=env_code
+
+xij_mat=DL_mat[,rep(1:9,each=237)][1:121,]
+#xij中心化
+xij_mean=apply(xij_mat,1,mean)
+xij_mat=xij_mat-xij_mean
+yij_ori1=as.numeric(FT_gdd_mat)
+yij_ori2=as.numeric(FT_dap_mat)
+#NA清理 采样 并且对Y进行标准化处理
+yij1=scale(yij_ori1[!is.na(yij_ori1)])
+yij2=scale(yij_ori2[!is.na(yij_ori2)])
+xij_list=list(xij_mat[,!is.na(yij_ori1)])
+
+sample_index=1:length(yij1)#sample(length(yij),1000)
+yij_test1=yij1[sample_index]
+yij_test2=yij2[sample_index]
+xij_test=list(xij_mat[,!is.na(yij_ori1)][,sample_index])
+
+
+#平滑测试
+basis_need=create.bspline.basis(rangeval = seq(1,121,3))
+smoothed_x=smooth.basis(1:121,xij_list[[1]],basis_need)
+
+```
+parallel algorithm     
+```{r}
+flower_clureg=function(seed,method="ls")
+{
+  library(FdaCluReg)
+  library(fda)
+  basis_need=create.bspline.basis(seq(1,121,2),norder = 4)
+  temp_res_gibbs=gibbs_clusterwise_regression_auto(X_list = xij_test,Y=yij_test,basis = basis_need,sample_t = 1:121,true_label = rep(1,length(yij_test)),K_max = 8,seed = seed,method = method,lambda = 1,rounds = 110,var_ratio = 0.9)
+  temp_res_2021=clusterwise_reg_2021_auto(X_list = xij_test,Y=yij_test,basis = basis_need,sample_t = 1:121,true_label = rep(1,length(yij_test)),K_max = 8,seed = seed,method = method)
+  save(temp_res_gibbs,file = paste("F:/iCloudDrive/Project/聚类回归文章/flowertime_dt/gibbs/",method,seed,".RData",sep = ""))
+  save(temp_res_2021,file = paste("F:/iCloudDrive/Project/聚类回归文章/flowertime_dt/2021/",method,seed,".RData",sep = ""))
+  return(seed)
+}
+```
+
+```{r eval=FALSE}
+num_cores=10
+library(parallel)
+cl=makeCluster(num_cores)
+yij_test=yij_test1
+clusterExport(cl,  envir = environment(),varlist =c("xij_test","yij_test"))
+parLapply(cl,1:50,flower_clureg,method="lad")
+parLapply(cl,1:50,flower_clureg,method="ls")
+```
+
+### results summary and visualization   
+```{r}
+#设置路径
+file_dir="~/Library/Mobile Documents/com~apple~CloudDocs/Project/聚类回归文章/flowertime_dt"
+dir_2021=paste(file_dir,"2021",sep = "/")
+dir_gibbs=paste(file_dir,"gibbs",sep="/")
+file_2021=paste(dir_2021,dir(dir_2021),sep = "/")
+file_gibbs=paste(dir_gibbs,dir(dir_gibbs),sep="/")
+ARI_df=NULL
+```
+
+#### CFLR-BIC
+```{r}
+#样例结果用于画图
+IC_seq=NULL
+temp_ari=NULL
+file_list=file_2021
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,121,2)
+temp_res=temp_res_2021
+fd_df=eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[1]])
+
+K_BIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_2021
+K_BIC=c(K_BIC,temp_res$K_BIC)
+IC_seq=c(IC_seq,temp_res$selected_res_BIC$BIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_BIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_BIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_BIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_BIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_BIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+temp_ari=c(temp_ari,ari_record)
+#可视化
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "CFLR-BIC(LAD)")
+  
+p1=p
+ARI_df=c(ARI_df,temp_ari)
+```
+
+
+#### CFLR-eBIC   
+```{r}
+#样例结果用于画图
+IC_seq=NULL
+temp_ari=NULL
+file_list=file_2021
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,121,2)
+temp_res=temp_res_2021
+fd_df=eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]])
+
+K_eBIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_2021
+K_eBIC=c(K_eBIC,temp_res$K_eBIC)
+IC_seq=c(IC_seq,temp_res$selected_res_eBIC$eBIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_eBIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_eBIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_eBIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_eBIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+temp_ari=c(temp_ari,ari_record)
+#可视化
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "CFLR-eBIC(LAD)")
+  
+p2=p
+ARI_df=c(ARI_df,temp_ari)
+```
+
+
+#### GCFLR-eBIC
+```{r}
+#样例结果用于画图
+IC_seq=NULL
+temp_ari=NULL
+file_list=file_gibbs
+load(file_list[1])
+#函数型系数的ggplot画图df
+sample_t=seq(1,121,2)
+temp_res=temp_res_gibbs
+fd_df=eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]])
+
+K_eBIC=NULL#类簇个数记录
+label_record=NULL#最终标签记录ARI 计算
+coef_record=c(0,0,0)#函数型系数基展开系数记录
+
+for(i in 1:length(file_list))
+{
+load(file_list[i])
+temp_res=temp_res_gibbs
+K_eBIC=c(K_eBIC,temp_res$K_eBIC)
+IC_seq=c(IC_seq,temp_res$selected_res_eBIC$eBIC)
+#类簇划分数量分布
+number_sum=as.numeric(table(temp_res$selected_res_eBIC$labels))
+#函数型系数的ggplot画图df添加新数据
+fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[1]]))
+for (j in 2:length(temp_res$selected_res_eBIC$beta_fd[[1]]))
+{fd_df=cbind(fd_df,eval.fd(sample_t,temp_res$selected_res_eBIC$beta_fd[[1]][[j]]))}
+#标签记录
+label_record=c(label_record,temp_res$selected_res_eBIC$labels[[1]])
+#系数可视化
+coef_record=cbind(coef_record,temp_res$selected_res_eBIC$coefficients[[1]])
+}
+
+label_record=matrix(label_record,ncol = length(file_list))
+ari_record=ari_fun(label_record)
+coef_record=coef_record[,-1]
+fd_df=fd_df[,-1]
+temp_ari=c(temp_ari,ari_record)
+#可视化
+plot_fd=data.frame(time=rep(sample_t,ncol(fd_df)),value=as.vector(fd_df),group=rep(1:ncol(fd_df),each=length(sample_t)))
+p=ggplot(plot_fd,aes(x=time,y=value,group=factor(group)))+geom_line(alpha=0.1,size=0.8)+
+  geom_hline(yintercept = 0,linetype="dashed",color="red",size=0.5)+
+  theme(panel.background = element_rect(fill = "white"),
+        axis.line = element_line(colour="black"))+
+  labs(title = "GCFLR-eBIC(LAD)")
+  
+p3=p
+ARI_df=c(ARI_df,temp_ari)
+```
+
+
+### visualization of stablability(coefficient trajectories and boxplot of ARI)       
+```{r}
+library(ggplot2)
+library(reshape2)
+#ARI 
+ARI_plot=as.data.frame(matrix(ARI_df,ncol = 3))
+colnames(ARI_plot) = c("CFLR-BIC", "CFLR-eBIC", "GCFLR-eBIC")
+
+# 将数据转换为长格式
+ARI_long = melt(ARI_plot, variable.name = "Method", value.name = "ARI")
+p_boxplot = ggplot(ARI_long, aes(x = Method, y = ARI)) +
+  geom_boxplot(fill = "white", color = "black") +  # 盒子填充白色，边框黑色
+  theme_minimal() +
+  labs(x = "Method",
+       y = "ARI") + 
+   labs(x = "method", y = "ARI") +  
+  labs(title = "")+
+  theme(
+    panel.background = element_blank(),            # 移除底纹
+    panel.border = element_rect(color = "black", fill = NA,size = 1.2),  # 设置边框为黑色
+    panel.grid.major = element_blank(),                # 移除主要网格线
+    panel.grid.minor = element_blank(),                # 移除次要网格线
+    axis.title.x = element_text(size = 14),        # 调整 x 轴标签字体大小
+    axis.text = element_text(size = 14)            # 调整坐标轴字体大小
+  )
+p_boxplot
+
+ 
+#4*6
+#COEF
+library(patchwork)
+p_list_lad=vector("list",3)
+p_list_lad[[1]]=p1;p_list_lad[[2]]=p2;p_list_lad[[3]]=p3
+p_lad=wrap_plots(p_list_lad, ncol = 3)
+p_lad
+#8*4
+```
+
+
+
